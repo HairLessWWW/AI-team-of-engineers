@@ -7,6 +7,7 @@ It lets the CTO:
 - list available AI employees;
 - ask one AI employee a direct question;
 - gather a short multi-agent engineering meeting;
+- use inline buttons for common actions;
 - run in mock mode before connecting a real LLM.
 
 ## Create a Telegram bot
@@ -67,6 +68,19 @@ $env:TELEGRAM_ALLOWED_USER_IDS = "123456789,987654321"
 /meeting <agent_id,agent_id> <topic>
 ```
 
+## Buttons
+
+The bot shows inline buttons for:
+
+- AI employees;
+- status;
+- ask agent;
+- meeting;
+- whoami;
+- back to menu.
+
+Agent buttons do not yet store a draft question. They show the exact `/ask <agent_id> <question>` command to send next.
+
 Examples:
 
 ```text
@@ -118,6 +132,7 @@ $env:OPENAI_MODEL = "gpt-4.1-mini"
 - The bot uses long polling, not webhooks.
 - Network timeouts are retried during polling.
 - LLM provider `429 Too Many Requests` errors are reported as a readable fallback message.
+- Inline buttons are command shortcuts; multi-step session memory is not implemented yet.
 - Project memory and file uploads are not implemented yet.
 - Meetings call all MVP agents by default, or selected agents when provided.
 - Human approval workflow is not implemented yet.

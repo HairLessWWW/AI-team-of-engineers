@@ -81,6 +81,12 @@ class TelegramConfig:
         )
 
 
+@dataclass(frozen=True)
+class BotReply:
+    text: str
+    reply_markup: dict[str, object] | None = None
+
+
 class TelegramAPI:
     def __init__(self, token: str) -> None:
         self.base_url = f"https://api.telegram.org/bot{token}"
@@ -114,9 +120,15 @@ class TelegramAPI:
             raise RuntimeError(f"Unexpected Telegram getMe response: {data}")
         return result
 
-    def send_message(self, chat_id: int, text: str) -> None:
+    def send_message(self, chat_id: int, text: str, reply_markup: dict[str, object] | None = None) -> None:
         for chunk in split_telegram_message(text):
-            self.call("sendMessage", {"chat_id": chat_id, "text": chunk})
+            payload: dict[str, object] = {"chat_id": chat_id, "text": chunk}
+            if reply_markup and chunk == text:
+                payload["reply_markup"] = reply_markup
+            self.call("sendMessage", payload)
+
+    def answer_callback_query(self, callback_query_id: str) -> None:
+        self.call("answerCallbackQuery", {"callback_query_id": callback_query_id})
 
 
 def split_telegram_message(text: str, limit: int = 3800) -> list[str]:
@@ -230,6 +242,42 @@ def render_agents(agents: list[AgentProfile]) -> str:
     return "\n".join(lines)
 
 
+def main_menu_keyboard() -> dict[str, object]:
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "AI employees", "callback_data": "menu:agents"},
+                {"text": "Status", "callback_data": "menu:status"},
+            ],
+            [
+                {"text": "Ask agent", "callback_data": "menu:ask"},
+                {"text": "Meeting", "callback_data": "menu:meeting"},
+            ],
+            [{"text": "Who am I?", "callback_data": "menu:whoami"}],
+        ]
+    }
+
+
+def agents_keyboard(agents: list[AgentProfile]) -> dict[str, object]:
+    rows = []
+    for agent in agents:
+        rows.append([{"text": agent.id, "callback_data": f"agent:{agent.id}"}])
+    rows.append([{"text": "Back to menu", "callback_data": "menu:start"}])
+    return {"inline_keyboard": rows}
+
+
+def after_answer_keyboard() -> dict[str, object]:
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "Ask another agent", "callback_data": "menu:ask"},
+                {"text": "Start meeting", "callback_data": "menu:meeting"},
+            ],
+            [{"text": "Status", "callback_data": "menu:status"}],
+        ]
+    }
+
+
 def render_status(mode: str, agents: list[AgentProfile], allowed_user_ids: set[int] | None) -> str:
     access = "restricted" if allowed_user_ids else "open"
     return "\n".join(
@@ -241,6 +289,47 @@ def render_status(mode: str, agents: list[AgentProfile], allowed_user_ids: set[i
             "- frontend: Telegram long polling",
         ]
     )
+
+
+def as_reply(text: str, reply_markup: dict[str, object] | None = None) -> BotReply:
+    return BotReply(text=text, reply_markup=reply_markup)
+
+
+def handle_callback(
+    callback_data: str,
+    agents: list[AgentProfile],
+    *,
+    mode: str,
+    user_id: int | None,
+    allowed_user_ids: set[int] | None,
+) -> BotReply:
+    if callback_data == "menu:start":
+        return as_reply(HELP_TEXT, main_menu_keyboard())
+    if callback_data == "menu:agents":
+        return as_reply(render_agents(agents), agents_keyboard(agents))
+    if callback_data == "menu:status":
+        return as_reply(render_status(mode, agents, allowed_user_ids), main_menu_keyboard())
+    if callback_data == "menu:whoami":
+        if user_id is None:
+            return as_reply("Telegram user id is unavailable.", main_menu_keyboard())
+        return as_reply(f"Your Telegram user id: {user_id}", main_menu_keyboard())
+    if callback_data == "menu:ask":
+        return as_reply("Choose an AI employee, then send: /ask <agent_id> <question>", agents_keyboard(agents))
+    if callback_data == "menu:meeting":
+        return as_reply(
+            "Send one of these:\n/meeting <topic>\n/meeting systems,electrical,manufacturing <topic>",
+            main_menu_keyboard(),
+        )
+    if callback_data.startswith("agent:"):
+        agent_id = callback_data[len("agent:") :]
+        agent = find_agent(agents, agent_id)
+        if not agent:
+            return as_reply(f"Unknown agent: {agent_id}", agents_keyboard(agents))
+        return as_reply(
+            f"{agent.name}\n\nFocus: {agent.focus}\n\nSend:\n/ask {agent.id} <your question>",
+            after_answer_keyboard(),
+        )
+    return as_reply("Unknown button action.", main_menu_keyboard())
 
 
 def parse_meeting_request(rest: str, agents: list[AgentProfile]) -> tuple[list[AgentProfile], str, str | None]:
@@ -271,36 +360,36 @@ def handle_text(
     mode: str = "mock-llm",
     user_id: int | None = None,
     allowed_user_ids: set[int] | None = None,
-) -> str:
+) -> BotReply:
     stripped = text.strip()
     if stripped in {"/start", "/help"}:
-        return HELP_TEXT
+        return as_reply(HELP_TEXT, main_menu_keyboard())
     if stripped == "/whoami":
         if user_id is None:
-            return "Telegram user id is unavailable in this context."
-        return f"Your Telegram user id: {user_id}"
+            return as_reply("Telegram user id is unavailable in this context.", main_menu_keyboard())
+        return as_reply(f"Your Telegram user id: {user_id}", main_menu_keyboard())
     if stripped == "/status":
-        return render_status(mode, agents, allowed_user_ids)
+        return as_reply(render_status(mode, agents, allowed_user_ids), main_menu_keyboard())
     if stripped == "/agents":
-        return render_agents(agents)
+        return as_reply(render_agents(agents), agents_keyboard(agents))
     if stripped.startswith("/ask "):
         rest = stripped[len("/ask ") :].strip()
         if " " not in rest:
-            return "Use: /ask <agent_id> <question>"
+            return as_reply("Use: /ask <agent_id> <question>", agents_keyboard(agents))
         agent_id, question = rest.split(" ", 1)
         agent = find_agent(agents, agent_id)
         if not agent:
-            return f"Unknown agent: {agent_id}\n\n{render_agents(agents)}"
-        return ask_agent(agent, question, llm_client, prompts_path)
+            return as_reply(f"Unknown agent: {agent_id}\n\n{render_agents(agents)}", agents_keyboard(agents))
+        return as_reply(ask_agent(agent, question, llm_client, prompts_path), after_answer_keyboard())
     if stripped.startswith("/meeting "):
         rest = stripped[len("/meeting ") :].strip()
         meeting_agents, topic, error = parse_meeting_request(rest, agents)
         if error:
-            return f"{error}\n\n{render_agents(agents)}"
+            return as_reply(f"{error}\n\n{render_agents(agents)}", agents_keyboard(agents))
         if not topic:
-            return "Use: /meeting <topic> or /meeting <agent_id,agent_id> <topic>"
-        return run_meeting(meeting_agents, topic, llm_client, prompts_path)
-    return "I did not understand the command.\n\n" + HELP_TEXT
+            return as_reply("Use: /meeting <topic> or /meeting <agent_id,agent_id> <topic>", main_menu_keyboard())
+        return as_reply(run_meeting(meeting_agents, topic, llm_client, prompts_path), after_answer_keyboard())
+    return as_reply("I did not understand the command.\n\n" + HELP_TEXT, main_menu_keyboard())
 
 
 def run_bot(config: TelegramConfig) -> None:
@@ -318,6 +407,41 @@ def run_bot(config: TelegramConfig) -> None:
             continue
         for update in updates:
             offset = int(update["update_id"]) + 1
+            callback_query = update.get("callback_query")
+            if isinstance(callback_query, dict):
+                callback_id = callback_query.get("id")
+                callback_data = callback_query.get("data")
+                message = callback_query.get("message")
+                from_user = callback_query.get("from")
+                if (
+                    isinstance(callback_id, str)
+                    and isinstance(callback_data, str)
+                    and isinstance(message, dict)
+                    and isinstance(from_user, dict)
+                    and isinstance(message.get("chat"), dict)
+                ):
+                    user_id = int(from_user["id"])
+                    chat_id = int(message["chat"]["id"])
+                    if config.allowed_user_ids is not None and user_id not in config.allowed_user_ids:
+                        api.answer_callback_query(callback_id)
+                        api.send_message(chat_id, "Access denied.")
+                        continue
+                    try:
+                        reply = handle_callback(
+                            callback_data,
+                            agents,
+                            mode=config.mode,
+                            user_id=user_id,
+                            allowed_user_ids=config.allowed_user_ids,
+                        )
+                    except Exception as exc:
+                        reply = as_reply(f"Error: {exc}")
+                    try:
+                        api.answer_callback_query(callback_id)
+                        api.send_message(chat_id, reply.text, reply.reply_markup)
+                    except (HTTPError, URLError, TimeoutError, SocketTimeout) as exc:
+                        print(f"Telegram callback handling error: {exc}.")
+                continue
             message = update.get("message")
             if not isinstance(message, dict):
                 continue
@@ -332,7 +456,7 @@ def run_bot(config: TelegramConfig) -> None:
                 api.send_message(chat_id, "Access denied.")
                 continue
             try:
-                response = handle_text(
+                reply = handle_text(
                     text,
                     agents,
                     llm_client,
@@ -342,9 +466,9 @@ def run_bot(config: TelegramConfig) -> None:
                     allowed_user_ids=config.allowed_user_ids,
                 )
             except Exception as exc:
-                response = f"Error: {exc}"
+                reply = as_reply(f"Error: {exc}")
             try:
-                api.send_message(chat_id, response)
+                api.send_message(chat_id, reply.text, reply.reply_markup)
             except (HTTPError, URLError, TimeoutError, SocketTimeout) as exc:
                 print(f"Telegram sendMessage error: {exc}.")
         time.sleep(config.poll_interval_seconds)

@@ -6,7 +6,9 @@ from ai_engineering_platform.llm import MockLLMClient
 from ai_engineering_platform.telegram_bot import (
     TelegramConfig,
     find_agent,
+    handle_callback,
     handle_text,
+    main_menu_keyboard,
     parse_meeting_request,
     render_agents,
     split_telegram_message,
@@ -34,7 +36,7 @@ class TelegramBotTest(unittest.TestCase):
                 focus="Production readiness",
                 keywords=[],
                 expected_artifacts=[],
-            )
+            ),
         ]
 
     def test_find_agent_by_id(self) -> None:
@@ -52,11 +54,13 @@ class TelegramBotTest(unittest.TestCase):
 
     def test_handle_agents_command(self) -> None:
         response = handle_text("/agents", self.agents, MockLLMClient(), prompts_path=None)
-        self.assertIn("electrical", response)
+        self.assertIn("electrical", response.text)
+        self.assertIsNotNone(response.reply_markup)
 
     def test_handle_whoami_command(self) -> None:
         response = handle_text("/whoami", self.agents, MockLLMClient(), prompts_path=None, user_id=123)
-        self.assertIn("123", response)
+        self.assertIn("123", response.text)
+        self.assertIsNotNone(response.reply_markup)
 
     def test_handle_status_command(self) -> None:
         response = handle_text(
@@ -67,8 +71,8 @@ class TelegramBotTest(unittest.TestCase):
             mode="mock-llm",
             allowed_user_ids={123},
         )
-        self.assertIn("mock-llm", response)
-        self.assertIn("restricted", response)
+        self.assertIn("mock-llm", response.text)
+        self.assertIn("restricted", response.text)
 
     def test_handle_ask_command(self) -> None:
         response = handle_text(
@@ -77,8 +81,9 @@ class TelegramBotTest(unittest.TestCase):
             MockLLMClient(response_prefix="Bot test"),
             prompts_path=None,
         )
-        self.assertIn("Bot test", response)
-        self.assertIn("What blocks pilot production", response)
+        self.assertIn("Bot test", response.text)
+        self.assertIn("What blocks pilot production", response.text)
+        self.assertIsNotNone(response.reply_markup)
 
     def test_handle_ask_command_with_alias(self) -> None:
         response = handle_text(
@@ -87,8 +92,8 @@ class TelegramBotTest(unittest.TestCase):
             MockLLMClient(response_prefix="Bot test"),
             prompts_path=None,
         )
-        self.assertIn("Bot test", response)
-        self.assertIn("Что блокирует пилотную сборку", response)
+        self.assertIn("Bot test", response.text)
+        self.assertIn("Что блокирует пилотную сборку", response.text)
 
     def test_handle_ask_429_fallback(self) -> None:
         response = handle_text(
@@ -97,8 +102,36 @@ class TelegramBotTest(unittest.TestCase):
             RateLimitedLLMClient(),
             prompts_path=None,
         )
-        self.assertIn("429 Too Many Requests", response)
-        self.assertIn("bot itself is running", response)
+        self.assertIn("429 Too Many Requests", response.text)
+        self.assertIn("bot itself is running", response.text)
+
+    def test_main_menu_keyboard_contains_actions(self) -> None:
+        keyboard = main_menu_keyboard()
+        rendered = str(keyboard)
+        self.assertIn("menu:agents", rendered)
+        self.assertIn("menu:meeting", rendered)
+
+    def test_handle_callback_agent_menu(self) -> None:
+        response = handle_callback(
+            "menu:agents",
+            self.agents,
+            mode="mock-llm",
+            user_id=123,
+            allowed_user_ids=None,
+        )
+        self.assertIn("Available AI employees", response.text)
+        self.assertIn("agent:electrical", str(response.reply_markup))
+
+    def test_handle_callback_agent_hint(self) -> None:
+        response = handle_callback(
+            "agent:electrical",
+            self.agents,
+            mode="mock-llm",
+            user_id=123,
+            allowed_user_ids=None,
+        )
+        self.assertIn("/ask electrical", response.text)
+        self.assertIsNotNone(response.reply_markup)
 
     def test_parse_meeting_request_with_selected_agents(self) -> None:
         selected, topic, error = parse_meeting_request("electrical,manufacturing Pilot readiness", self.agents)

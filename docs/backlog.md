@@ -238,6 +238,24 @@ Acceptance criteria:
 - `/meeting` поддерживает выбор участников.
 - Ошибка LLM `429 Too Many Requests` возвращается пользователю понятным сообщением.
 
+### M4-00B. Добавить Telegram inline buttons
+
+Priority: high
+
+Status: done
+
+Description:
+
+Добавить кнопочное меню для частых действий в Telegram.
+
+Acceptance criteria:
+
+- `/start` показывает inline keyboard.
+- `/agents` показывает кнопки агентов.
+- Кнопки обрабатываются через callback queries.
+- Есть кнопки для статуса, whoami, выбора агента и совещания.
+- После ответа есть быстрые действия: спросить другого агента, начать совещание, статус.
+
 ### M4-01. Создать web dashboard prototype
 
 Priority: medium
