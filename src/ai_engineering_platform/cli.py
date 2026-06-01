@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 from .agents import load_agents
 from .artifacts import load_artifacts
 from .llm import MockLLMClient, OpenAICompatibleLLMClient
 from .orchestrator import build_readiness_report
+from .telegram_bot import TelegramConfig, run_bot
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -23,6 +25,16 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["heuristic", "mock-llm", "llm"],
         default="heuristic",
         help="Analysis mode. Use heuristic for offline runs, mock-llm for tests, llm for an OpenAI-compatible API.",
+    )
+
+    telegram_bot = subparsers.add_parser("telegram-bot", help="Run the Telegram bot frontend.")
+    telegram_bot.add_argument("--agents", default=Path("configs/agents.json"), type=Path, help="Agent registry JSON.")
+    telegram_bot.add_argument("--prompts", default=Path("prompts"), type=Path, help="Folder with role prompt templates.")
+    telegram_bot.add_argument(
+        "--mode",
+        choices=["mock-llm", "llm"],
+        default=os.getenv("AI_ENGINEERING_BOT_MODE", "mock-llm"),
+        help="Bot analysis mode. Use mock-llm for local testing or llm for an OpenAI-compatible API.",
     )
     return parser
 
@@ -45,3 +57,13 @@ def main() -> None:
     args = build_parser().parse_args()
     if args.command == "review":
         run_review(args.project, args.agents, args.prompts, args.output, args.mode)
+    elif args.command == "telegram-bot":
+        config = TelegramConfig.from_env()
+        config = TelegramConfig(
+            token=config.token,
+            agents_path=args.agents,
+            prompts_path=args.prompts,
+            mode=args.mode,
+            allowed_user_ids=config.allowed_user_ids,
+        )
+        run_bot(config)

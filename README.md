@@ -47,6 +47,15 @@ $env:OPENAI_MODEL = "gpt-4.1-mini"
 python -m ai_engineering_platform review --project examples/demo_project --output outputs/demo-llm-report.md --mode llm
 ```
 
+Telegram bot MVP:
+
+```powershell
+$env:PYTHONPATH = "src"
+$env:TELEGRAM_BOT_TOKEN = "..."
+$env:AI_ENGINEERING_BOT_MODE = "mock-llm"
+python -m ai_engineering_platform telegram-bot
+```
+
 ## Структура репозитория
 
 ```text
@@ -66,6 +75,7 @@ tests/                   Тесты базовой логики
 - [MVP specification](docs/mvp-spec.md)
 - [Product backlog](docs/backlog.md)
 - [Agent prompting guide](docs/prompting.md)
+- [Telegram bot MVP](docs/telegram-bot.md)
 - [Roadmap](docs/roadmap.md)
 
 ## Принципы

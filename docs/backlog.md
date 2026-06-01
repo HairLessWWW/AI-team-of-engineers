@@ -201,6 +201,25 @@ Acceptance criteria:
 
 Цель: сделать платформу удобной для CTO и лидов без работы в терминале.
 
+### M4-00. Создать Telegram bot MVP
+
+Priority: high
+
+Status: done
+
+Description:
+
+Создать первый Telegram-интерфейс, через который CTO может обращаться к AI-сотрудникам и собирать короткие совещания агентов.
+
+Acceptance criteria:
+
+- Бот запускается через `TELEGRAM_BOT_TOKEN`.
+- Есть команды `/start`, `/agents`, `/ask`, `/meeting`.
+- Есть mock-режим без API-ключа.
+- Есть LLM-режим через OpenAI-compatible client.
+- Есть опциональный whitelist по Telegram user id.
+- Токены не коммитятся в репозиторий.
+
 ### M4-01. Создать web dashboard prototype
 
 Priority: medium
