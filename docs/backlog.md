@@ -63,6 +63,8 @@ Acceptance criteria:
 
 Priority: high
 
+Status: done
+
 Description:
 
 Создать промпты для Systems, Electrical, Manufacturing и Certification/Documentation агентов.

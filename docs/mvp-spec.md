@@ -29,6 +29,8 @@ MVP должен помогать CTO и ведущим инженерам бы�
 - Manufacturing Engineering Agent.
 - Certification and Technical Documentation Agent.
 
+Ролевые инструкции для этих агентов лежат в `prompts/` и подключаются по `agent.id`.
+
 ## Входные данные
 
 Минимальный набор:

@@ -6,6 +6,7 @@ from pathlib import Path
 from .agents import AgentProfile
 from .artifacts import Artifact
 from .llm import LLMClient
+from .prompts import load_agent_prompt
 
 
 @dataclass(frozen=True)
@@ -54,19 +55,27 @@ def analyze_agent(agent: AgentProfile, artifacts: list[Artifact], project_dir: P
     )
 
 
-def build_agent_prompt(agent: AgentProfile, artifacts: list[Artifact], heuristic_finding: AgentFinding) -> list[dict[str, str]]:
+def build_agent_prompt(
+    agent: AgentProfile,
+    artifacts: list[Artifact],
+    heuristic_finding: AgentFinding,
+    role_prompt: str | None = None,
+) -> list[dict[str, str]]:
     artifact_context = "\n\n".join(
         f"FILE: {artifact.name}\n{artifact.text[:4000] if artifact.text else '[binary or unsupported text artifact]'}"
         for artifact in artifacts
     )
+    system_content = (
+        "You are an engineering AI agent. Analyze only the provided artifacts. "
+        "Separate facts, risks, open questions, and recommendations. "
+        "Do not approve safety-critical or production decisions."
+    )
+    if role_prompt:
+        system_content = f"{system_content}\n\nRole-specific instructions:\n{role_prompt}"
     return [
         {
             "role": "system",
-            "content": (
-                "You are an engineering AI agent. Analyze only the provided artifacts. "
-                "Separate facts, risks, open questions, and recommendations. "
-                "Do not approve safety-critical or production decisions."
-            ),
+            "content": system_content,
         },
         {
             "role": "user",
@@ -87,9 +96,11 @@ def analyze_agent_with_llm(
     artifacts: list[Artifact],
     project_dir: Path,
     llm_client: LLMClient,
+    prompts_dir: Path | None = None,
 ) -> AgentFinding:
     heuristic_finding = analyze_agent(agent, artifacts, project_dir)
-    llm_analysis = llm_client.complete(build_agent_prompt(agent, artifacts, heuristic_finding))
+    role_prompt = load_agent_prompt(agent.id, prompts_dir)
+    llm_analysis = llm_client.complete(build_agent_prompt(agent, artifacts, heuristic_finding, role_prompt))
     return AgentFinding(
         agent_name=heuristic_finding.agent_name,
         focus=heuristic_finding.focus,
@@ -105,9 +116,13 @@ def build_readiness_report(
     artifacts: list[Artifact],
     agents: list[AgentProfile],
     llm_client: LLMClient | None = None,
+    prompts_dir: Path | None = None,
 ) -> str:
     if llm_client:
-        findings = [analyze_agent_with_llm(agent, artifacts, project_dir, llm_client) for agent in agents]
+        findings = [
+            analyze_agent_with_llm(agent, artifacts, project_dir, llm_client, prompts_dir=prompts_dir)
+            for agent in agents
+        ]
     else:
         findings = [analyze_agent(agent, artifacts, project_dir) for agent in agents]
     high_or_medium = [item for item in findings if item.risk_level in {"high", "medium"}]

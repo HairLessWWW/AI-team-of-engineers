@@ -54,6 +54,7 @@ python -m ai_engineering_platform review --project examples/demo_project --outpu
 configs/                 Реестр AI-агентов
 docs/                    Концепция, MVP specification, backlog, roadmap
 examples/demo_project/   Пример входных инженерных данных
+prompts/                 Ролевые инструкции для LLM-агентов
 src/                     Python MVP-скелет платформы
 tests/                   Тесты базовой логики
 ```
@@ -64,6 +65,7 @@ tests/                   Тесты базовой логики
 - [Карта AI-агентов](docs/agents.md)
 - [MVP specification](docs/mvp-spec.md)
 - [Product backlog](docs/backlog.md)
+- [Agent prompting guide](docs/prompting.md)
 - [Roadmap](docs/roadmap.md)
 
 ## Принципы
