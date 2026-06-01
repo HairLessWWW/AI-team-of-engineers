@@ -34,12 +34,21 @@ python -m ai_engineering_platform review --project examples/demo_project --outpu
 ## Структура репозитория
 
 ```text
+.github/                 Шаблоны Issues и Pull Requests
 configs/                 Реестр AI-агентов
-docs/                    Концепция, архитектура, roadmap
+docs/                    Концепция, MVP specification, backlog, roadmap
 examples/demo_project/   Пример входных инженерных данных
 src/                     Python MVP-скелет платформы
 tests/                   Тесты базовой логики
 ```
+
+## Главные документы
+
+- [Концепция платформы](docs/platform-concept.md)
+- [Карта AI-агентов](docs/agents.md)
+- [MVP specification](docs/mvp-spec.md)
+- [Product backlog](docs/backlog.md)
+- [Roadmap](docs/roadmap.md)
 
 ## Принципы
 
