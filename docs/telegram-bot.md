@@ -59,18 +59,43 @@ $env:TELEGRAM_ALLOWED_USER_IDS = "123456789,987654321"
 
 ```text
 /start
+/whoami
+/status
 /agents
 /ask <agent_id> <question>
 /meeting <topic>
+/meeting <agent_id,agent_id> <topic>
 ```
 
 Examples:
 
 ```text
 /ask electrical What blocks pilot assembly?
+/ask электрик Что блокирует пилотную сборку?
 /ask manufacturing What do we need before a pilot batch?
 /meeting Readiness of humanoid left arm for pilot production
+/meeting systems,electrical,manufacturing Readiness of humanoid left arm for pilot production
 ```
+
+## Agent aliases
+
+Supported aliases:
+
+- `электрик`, `электрика` -> `electrical`
+- `производство`, `технолог` -> `manufacturing`
+- `сертификация`, `документация` -> `certification_docs`
+- `архитектор`, `системщик` -> `systems`
+
+## Operational commands
+
+Use `/whoami` to get your Telegram user id for `TELEGRAM_ALLOWED_USER_IDS`.
+
+Use `/status` to check:
+
+- current bot mode;
+- number of loaded agents;
+- whether access is open or restricted;
+- Telegram frontend mode.
 
 ## Modes
 
@@ -92,6 +117,7 @@ $env:OPENAI_MODEL = "gpt-4.1-mini"
 
 - The bot uses long polling, not webhooks.
 - Network timeouts are retried during polling.
+- LLM provider `429 Too Many Requests` errors are reported as a readable fallback message.
 - Project memory and file uploads are not implemented yet.
-- Meetings currently call all MVP agents from `configs/agents.json`.
+- Meetings call all MVP agents by default, or selected agents when provided.
 - Human approval workflow is not implemented yet.

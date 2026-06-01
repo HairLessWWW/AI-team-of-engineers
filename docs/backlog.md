@@ -220,6 +220,24 @@ Acceptance criteria:
 - Есть опциональный whitelist по Telegram user id.
 - Токены не коммитятся в репозиторий.
 
+### M4-00A. Улучшить Telegram bot UX
+
+Priority: high
+
+Status: done
+
+Description:
+
+Добавить операционные команды и удобные обращения к AI-сотрудникам.
+
+Acceptance criteria:
+
+- Есть команда `/whoami`.
+- Есть команда `/status`.
+- Есть русские alias для ключевых агентов.
+- `/meeting` поддерживает выбор участников.
+- Ошибка LLM `429 Too Many Requests` возвращается пользователю понятным сообщением.
+
 ### M4-01. Создать web dashboard prototype
 
 Priority: medium
