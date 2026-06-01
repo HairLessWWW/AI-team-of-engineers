@@ -1,0 +1,4 @@
+part_number,description,qty,risk
+PWR-24V-001,24V power supply,2,second source required
+DRV-MOD-001,Actuator driver module,6,lead time unknown
+CONN-001,Industrial connector,12,ok
