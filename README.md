@@ -31,6 +31,22 @@ $env:PYTHONPATH = "src"
 python -m ai_engineering_platform review --project examples/demo_project --output outputs/demo-readiness-report.md
 ```
 
+Режим с mock LLM, полезный для проверки агентного контура без API-ключа:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m ai_engineering_platform review --project examples/demo_project --output outputs/demo-llm-report.md --mode mock-llm
+```
+
+Режим с OpenAI-compatible API:
+
+```powershell
+$env:PYTHONPATH = "src"
+$env:OPENAI_API_KEY = "..."
+$env:OPENAI_MODEL = "gpt-4.1-mini"
+python -m ai_engineering_platform review --project examples/demo_project --output outputs/demo-llm-report.md --mode llm
+```
+
 ## Структура репозитория
 
 ```text

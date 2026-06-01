@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .agents import AgentProfile
 from .artifacts import Artifact
+from .llm import LLMClient
 
 
 @dataclass(frozen=True)
@@ -14,6 +15,7 @@ class AgentFinding:
     matched_keywords: list[str]
     missing_artifacts: list[str]
     source_files: list[str]
+    llm_analysis: str | None = None
 
     @property
     def risk_level(self) -> str:
@@ -52,8 +54,62 @@ def analyze_agent(agent: AgentProfile, artifacts: list[Artifact], project_dir: P
     )
 
 
-def build_readiness_report(project_dir: Path, artifacts: list[Artifact], agents: list[AgentProfile]) -> str:
-    findings = [analyze_agent(agent, artifacts, project_dir) for agent in agents]
+def build_agent_prompt(agent: AgentProfile, artifacts: list[Artifact], heuristic_finding: AgentFinding) -> list[dict[str, str]]:
+    artifact_context = "\n\n".join(
+        f"FILE: {artifact.name}\n{artifact.text[:4000] if artifact.text else '[binary or unsupported text artifact]'}"
+        for artifact in artifacts
+    )
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are an engineering AI agent. Analyze only the provided artifacts. "
+                "Separate facts, risks, open questions, and recommendations. "
+                "Do not approve safety-critical or production decisions."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Agent: {agent.name}\n"
+                f"Focus: {agent.focus}\n"
+                f"Matched heuristic signals: {', '.join(heuristic_finding.matched_keywords) or 'none'}\n"
+                f"Missing or weak artifacts: {', '.join(heuristic_finding.missing_artifacts) or 'none'}\n\n"
+                f"Artifacts:\n{artifact_context}\n\n"
+                "Return concise Markdown with sections: Facts, Risks, Open Questions, Recommendations."
+            ),
+        },
+    ]
+
+
+def analyze_agent_with_llm(
+    agent: AgentProfile,
+    artifacts: list[Artifact],
+    project_dir: Path,
+    llm_client: LLMClient,
+) -> AgentFinding:
+    heuristic_finding = analyze_agent(agent, artifacts, project_dir)
+    llm_analysis = llm_client.complete(build_agent_prompt(agent, artifacts, heuristic_finding))
+    return AgentFinding(
+        agent_name=heuristic_finding.agent_name,
+        focus=heuristic_finding.focus,
+        matched_keywords=heuristic_finding.matched_keywords,
+        missing_artifacts=heuristic_finding.missing_artifacts,
+        source_files=heuristic_finding.source_files,
+        llm_analysis=llm_analysis,
+    )
+
+
+def build_readiness_report(
+    project_dir: Path,
+    artifacts: list[Artifact],
+    agents: list[AgentProfile],
+    llm_client: LLMClient | None = None,
+) -> str:
+    if llm_client:
+        findings = [analyze_agent_with_llm(agent, artifacts, project_dir, llm_client) for agent in agents]
+    else:
+        findings = [analyze_agent(agent, artifacts, project_dir) for agent in agents]
     high_or_medium = [item for item in findings if item.risk_level in {"high", "medium"}]
 
     lines = [
@@ -100,6 +156,8 @@ def build_readiness_report(project_dir: Path, artifacts: list[Artifact], agents:
             lines.extend(f"- `{source}`" for source in finding.source_files)
         else:
             lines.append("- No source file matched this agent's keyword set.")
+        if finding.llm_analysis:
+            lines.extend(["", "LLM analysis:", "", finding.llm_analysis])
         lines.append("")
 
     lines.extend(

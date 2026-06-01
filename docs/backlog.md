@@ -46,6 +46,8 @@ Acceptance criteria:
 
 Priority: high
 
+Status: done
+
 Description:
 
 Создать интерфейс, через который платформа сможет обращаться к LLM без привязки бизнес-логики к конкретному провайдеру.
