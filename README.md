@@ -76,6 +76,7 @@ tests/                   Тесты базовой логики
 - [Product backlog](docs/backlog.md)
 - [Agent prompting guide](docs/prompting.md)
 - [Telegram bot MVP](docs/telegram-bot.md)
+- [Deployment guide](deployment/server-setup.md)
 - [Roadmap](docs/roadmap.md)
 
 ## Принципы

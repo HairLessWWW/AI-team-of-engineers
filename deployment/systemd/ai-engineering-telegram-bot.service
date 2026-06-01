@@ -1,0 +1,17 @@
+[Unit]
+Description=AI Team of Engineers Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/ai-team-of-engineers
+EnvironmentFile=/etc/ai-team-of-engineers/telegram-bot.env
+ExecStart=/opt/ai-team-of-engineers/.venv/bin/python -m ai_engineering_platform telegram-bot
+Restart=always
+RestartSec=10
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target
