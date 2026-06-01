@@ -1,27 +1,25 @@
 # Telegram Bot MVP
 
-Telegram Bot is the first lightweight frontend for AI Team of Engineers.
+Telegram-бот - первый легкий интерфейс к AI Team of Engineers.
 
-It lets the CTO:
+Он позволяет CTO:
 
-- list available AI employees;
-- ask one AI employee a direct question;
-- gather a short multi-agent engineering meeting;
-- use inline buttons for common actions;
-- run in mock mode before connecting a real LLM.
+- смотреть список доступных AI-сотрудников;
+- задавать вопрос одному AI-сотруднику;
+- собирать короткое инженерное совещание нескольких агентов;
+- пользоваться кнопками для частых действий;
+- запускать mock-режим до подключения настоящего LLM.
 
-## Create a Telegram bot
+## Создание Telegram-бота
 
-1. Open Telegram and message `@BotFather`.
-2. Run `/newbot`.
-3. Choose a display name and username.
-4. Copy the token.
+1. Открой Telegram и напиши `@BotFather`.
+2. Выполни `/newbot`.
+3. Выбери имя и username.
+4. Скопируй token.
 
-Do not commit the token to GitHub.
+Не коммить token в GitHub и не показывай его на скриншотах.
 
-## Recommended local setup
-
-Set variables directly in PowerShell:
+## Локальный запуск
 
 ```powershell
 $env:TELEGRAM_BOT_TOKEN = "token-from-botfather"
@@ -30,7 +28,7 @@ $env:PYTHONPATH = "src"
 python -m ai_engineering_platform telegram-bot
 ```
 
-Before starting the long-running bot, check Telegram connectivity:
+Перед запуском долгоживущего бота можно проверить подключение к Telegram:
 
 ```powershell
 $env:PYTHONPATH = "src"
@@ -38,88 +36,94 @@ $env:TELEGRAM_BOT_TOKEN = "token-from-botfather"
 python -m ai_engineering_platform telegram-check
 ```
 
-If this command times out, the machine cannot reach `api.telegram.org`. Check VPN, proxy, firewall, hosting network rules, or Telegram availability from the current network.
+Если команда уходит в timeout, машина не может достучаться до `api.telegram.org`. Проверь VPN, proxy, firewall, настройки хостинга или доступность Telegram из текущей сети.
 
-## Limit access to your Telegram user
+## Ограничение доступа
 
-To avoid other people using the bot, set `TELEGRAM_ALLOWED_USER_IDS`.
+Чтобы бот отвечал только тебе, используй `TELEGRAM_ALLOWED_USER_IDS`.
 
-You can get your user id by messaging a Telegram user-info bot.
+Свой user id можно узнать командой:
+
+```text
+/whoami
+```
+
+Затем на сервере:
 
 ```powershell
 $env:TELEGRAM_ALLOWED_USER_IDS = "123456789"
 ```
 
-Multiple users can be comma-separated:
+Несколько пользователей можно указать через запятую:
 
 ```powershell
 $env:TELEGRAM_ALLOWED_USER_IDS = "123456789,987654321"
 ```
 
-## Commands
+## Команды
 
 ```text
 /start
 /whoami
 /status
 /agents
-/ask <agent_id> <question>
-/meeting <topic>
-/meeting <agent_id,agent_id> <topic>
+/ask <agent_id> <вопрос>
+/meeting <тема>
+/meeting <agent_id,agent_id> <тема>
 ```
 
-## Buttons
+## Кнопки
 
-The bot shows inline buttons for:
+Бот показывает inline-кнопки для:
 
-- AI employees;
-- status;
-- ask agent;
-- meeting;
-- whoami;
-- back to menu.
+- списка AI-сотрудников;
+- статуса;
+- выбора агента;
+- совещания;
+- Telegram user id;
+- возврата в меню.
 
-Agent buttons do not yet store a draft question. They show the exact `/ask <agent_id> <question>` command to send next.
+Кнопки агентов пока не хранят черновик вопроса. Они показывают точную команду `/ask <agent_id> <вопрос>`, которую нужно отправить следующим сообщением.
 
-Examples:
+Примеры:
 
 ```text
-/ask electrical What blocks pilot assembly?
+/ask electrical Что может заблокировать пилотную сборку?
 /ask электрик Что блокирует пилотную сборку?
-/ask manufacturing What do we need before a pilot batch?
-/meeting Readiness of humanoid left arm for pilot production
-/meeting systems,electrical,manufacturing Readiness of humanoid left arm for pilot production
+/ask manufacturing Что нужно подготовить перед пилотной партией?
+/meeting Готовность руки антропоморфного робота к пилотной партии
+/meeting systems,electrical,manufacturing Готовность руки к пилотной сборке
 ```
 
-## Agent aliases
+## Псевдонимы агентов
 
-Supported aliases:
+Поддерживаются псевдонимы:
 
 - `электрик`, `электрика` -> `electrical`
 - `производство`, `технолог` -> `manufacturing`
 - `сертификация`, `документация` -> `certification_docs`
 - `архитектор`, `системщик` -> `systems`
 
-## Operational commands
+## Операционные команды
 
-Use `/whoami` to get your Telegram user id for `TELEGRAM_ALLOWED_USER_IDS`.
+`/whoami` показывает Telegram user id для настройки `TELEGRAM_ALLOWED_USER_IDS`.
 
-Use `/status` to check:
+`/status` показывает:
 
-- current bot mode;
-- number of loaded agents;
-- whether access is open or restricted;
-- Telegram frontend mode.
+- режим бота;
+- количество загруженных агентов;
+- открыт ли доступ или включен whitelist;
+- режим Telegram-интерфейса.
 
-## Modes
+## Режимы
 
-Mock mode is useful for checking the Telegram workflow without LLM costs.
+Mock-режим полезен для проверки UX без расходов на LLM:
 
 ```powershell
 $env:AI_ENGINEERING_BOT_MODE = "mock-llm"
 ```
 
-LLM mode uses the OpenAI-compatible API client.
+LLM-режим использует OpenAI-compatible API client:
 
 ```powershell
 $env:AI_ENGINEERING_BOT_MODE = "llm"
@@ -127,12 +131,12 @@ $env:OPENAI_API_KEY = "..."
 $env:OPENAI_MODEL = "gpt-4.1-mini"
 ```
 
-## Current limitations
+## Текущие ограничения
 
-- The bot uses long polling, not webhooks.
-- Network timeouts are retried during polling.
-- LLM provider `429 Too Many Requests` errors are reported as a readable fallback message.
-- Inline buttons are command shortcuts; multi-step session memory is not implemented yet.
-- Project memory and file uploads are not implemented yet.
-- Meetings call all MVP agents by default, or selected agents when provided.
-- Human approval workflow is not implemented yet.
+- Бот использует long polling, а не webhooks.
+- Сетевые timeout во время polling повторяются автоматически.
+- Ошибка LLM-провайдера `429 Too Many Requests` показывается понятным сообщением.
+- Inline-кнопки пока являются быстрыми переходами к командам; полноценная память многошаговой сессии еще не реализована.
+- Project memory и загрузка файлов еще не реализованы.
+- Совещание по умолчанию вызывает всех MVP-агентов, либо выбранных агентов, если они указаны.
+- Human approval workflow еще не реализован.

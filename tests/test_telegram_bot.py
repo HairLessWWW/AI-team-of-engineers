@@ -49,6 +49,7 @@ class TelegramBotTest(unittest.TestCase):
 
     def test_render_agents(self) -> None:
         rendered = render_agents(self.agents)
+        self.assertIn("Доступные AI-сотрудники", rendered)
         self.assertIn("electrical", rendered)
         self.assertIn("Electrical Lead Engineer Agent", rendered)
 
@@ -71,8 +72,8 @@ class TelegramBotTest(unittest.TestCase):
             mode="mock-llm",
             allowed_user_ids={123},
         )
+        self.assertIn("Статус бота", response.text)
         self.assertIn("mock-llm", response.text)
-        self.assertIn("restricted", response.text)
 
     def test_handle_ask_command(self) -> None:
         response = handle_text(
@@ -103,13 +104,14 @@ class TelegramBotTest(unittest.TestCase):
             prompts_path=None,
         )
         self.assertIn("429 Too Many Requests", response.text)
-        self.assertIn("bot itself is running", response.text)
+        self.assertIn("Сам бот работает", response.text)
 
     def test_main_menu_keyboard_contains_actions(self) -> None:
         keyboard = main_menu_keyboard()
         rendered = str(keyboard)
         self.assertIn("menu:agents", rendered)
         self.assertIn("menu:meeting", rendered)
+        self.assertIn("AI-сотрудники", rendered)
 
     def test_handle_callback_agent_menu(self) -> None:
         response = handle_callback(
@@ -119,7 +121,7 @@ class TelegramBotTest(unittest.TestCase):
             user_id=123,
             allowed_user_ids=None,
         )
-        self.assertIn("Available AI employees", response.text)
+        self.assertIn("Доступные AI-сотрудники", response.text)
         self.assertIn("agent:electrical", str(response.reply_markup))
 
     def test_handle_callback_agent_hint(self) -> None:
@@ -131,6 +133,7 @@ class TelegramBotTest(unittest.TestCase):
             allowed_user_ids=None,
         )
         self.assertIn("/ask electrical", response.text)
+        self.assertIn("Отправь", response.text)
         self.assertIsNotNone(response.reply_markup)
 
     def test_parse_meeting_request_with_selected_agents(self) -> None:

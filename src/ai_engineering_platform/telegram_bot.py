@@ -16,20 +16,20 @@ from .prompts import load_agent_prompt
 
 HELP_TEXT = """AI Team of Engineers
 
-Commands:
-/start - show this help
-/whoami - show your Telegram user id
-/status - show bot runtime status
-/agents - list available AI employees
-/ask <agent_id> <question> - ask one AI employee
-/meeting <topic> - gather all MVP agents for a short engineering meeting
-/meeting <agent_id,agent_id> <topic> - gather selected agents
+Команды:
+/start - показать меню
+/whoami - показать твой Telegram user id
+/status - статус бота
+/agents - список AI-сотрудников
+/ask <agent_id> <вопрос> - задать вопрос одному AI-сотруднику
+/meeting <тема> - собрать совещание всех MVP-агентов
+/meeting <agent_id,agent_id> <тема> - собрать выбранных агентов
 
-Examples:
-/ask electrical What blocks pilot assembly?
+Примеры:
+/ask electrical Что может заблокировать пилотную сборку?
 /ask электрик Что блокирует пилотную сборку?
-/meeting Readiness of humanoid left arm for pilot production
-/meeting systems,electrical,manufacturing Left arm pilot readiness
+/meeting Готовность руки антропоморфного робота к пилотной партии
+/meeting systems,electrical,manufacturing Готовность руки к пилотной сборке
 """
 
 
@@ -177,15 +177,15 @@ def find_agent(agents: list[AgentProfile], agent_id: str) -> AgentProfile | None
 def llm_error_message(exc: Exception) -> str:
     if isinstance(exc, HTTPError) and exc.code == 429:
         return (
-            "LLM provider returned 429 Too Many Requests. "
-            "API quota, billing, or rate limit is not available right now. "
-            "The bot itself is running; switch to mock mode or try a shorter/single-agent request later."
+            "LLM-провайдер вернул 429 Too Many Requests. "
+            "Сейчас недоступна квота, биллинг или rate limit. "
+            "Сам бот работает; можно временно перейти в mock-режим или попробовать короткий запрос к одному агенту позже."
         )
     if isinstance(exc, HTTPError):
-        return f"LLM provider HTTP error {exc.code}: {exc.reason}"
+        return f"HTTP-ошибка LLM-провайдера {exc.code}: {exc.reason}"
     if isinstance(exc, URLError):
-        return f"LLM provider network error: {exc.reason}"
-    return f"LLM provider error: {exc}"
+        return f"Сетевая ошибка LLM-провайдера: {exc.reason}"
+    return f"Ошибка LLM-провайдера: {exc}"
 
 
 def complete_safely(llm_client: LLMClient, messages: list[dict[str, str]]) -> str:
@@ -235,10 +235,19 @@ def run_meeting(agents: list[AgentProfile], topic: str, llm_client: LLMClient, p
 
 
 def render_agents(agents: list[AgentProfile]) -> str:
-    lines = ["Available AI employees:"]
+    lines = ["Доступные AI-сотрудники:"]
     for agent in agents:
         lines.append(f"- {agent.id}: {agent.name}")
-    lines.extend(["", "Aliases:", "- электрик -> electrical", "- производство / технолог -> manufacturing", "- сертификация / документация -> certification_docs", "- архитектор / системщик -> systems"])
+    lines.extend(
+        [
+            "",
+            "Псевдонимы:",
+            "- электрик -> electrical",
+            "- производство / технолог -> manufacturing",
+            "- сертификация / документация -> certification_docs",
+            "- архитектор / системщик -> systems",
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -246,14 +255,14 @@ def main_menu_keyboard() -> dict[str, object]:
     return {
         "inline_keyboard": [
             [
-                {"text": "AI employees", "callback_data": "menu:agents"},
-                {"text": "Status", "callback_data": "menu:status"},
+                {"text": "AI-сотрудники", "callback_data": "menu:agents"},
+                {"text": "Статус", "callback_data": "menu:status"},
             ],
             [
-                {"text": "Ask agent", "callback_data": "menu:ask"},
-                {"text": "Meeting", "callback_data": "menu:meeting"},
+                {"text": "Задать вопрос", "callback_data": "menu:ask"},
+                {"text": "Совещание", "callback_data": "menu:meeting"},
             ],
-            [{"text": "Who am I?", "callback_data": "menu:whoami"}],
+            [{"text": "Мой Telegram ID", "callback_data": "menu:whoami"}],
         ]
     }
 
@@ -262,7 +271,7 @@ def agents_keyboard(agents: list[AgentProfile]) -> dict[str, object]:
     rows = []
     for agent in agents:
         rows.append([{"text": agent.id, "callback_data": f"agent:{agent.id}"}])
-    rows.append([{"text": "Back to menu", "callback_data": "menu:start"}])
+    rows.append([{"text": "Назад в меню", "callback_data": "menu:start"}])
     return {"inline_keyboard": rows}
 
 
@@ -270,10 +279,10 @@ def after_answer_keyboard() -> dict[str, object]:
     return {
         "inline_keyboard": [
             [
-                {"text": "Ask another agent", "callback_data": "menu:ask"},
-                {"text": "Start meeting", "callback_data": "menu:meeting"},
+                {"text": "Спросить другого", "callback_data": "menu:ask"},
+                {"text": "Начать совещание", "callback_data": "menu:meeting"},
             ],
-            [{"text": "Status", "callback_data": "menu:status"}],
+            [{"text": "Статус", "callback_data": "menu:status"}],
         ]
     }
 
@@ -282,11 +291,11 @@ def render_status(mode: str, agents: list[AgentProfile], allowed_user_ids: set[i
     access = "restricted" if allowed_user_ids else "open"
     return "\n".join(
         [
-            "Bot status:",
-            f"- mode: {mode}",
-            f"- agents: {len(agents)}",
-            f"- access: {access}",
-            "- frontend: Telegram long polling",
+            "Статус бота:",
+            f"- режим: {mode}",
+            f"- агентов загружено: {len(agents)}",
+            f"- доступ: {access}",
+            "- интерфейс: Telegram long polling",
         ]
     )
 
@@ -311,25 +320,25 @@ def handle_callback(
         return as_reply(render_status(mode, agents, allowed_user_ids), main_menu_keyboard())
     if callback_data == "menu:whoami":
         if user_id is None:
-            return as_reply("Telegram user id is unavailable.", main_menu_keyboard())
-        return as_reply(f"Your Telegram user id: {user_id}", main_menu_keyboard())
+            return as_reply("Telegram user id недоступен.", main_menu_keyboard())
+        return as_reply(f"Твой Telegram user id: {user_id}", main_menu_keyboard())
     if callback_data == "menu:ask":
-        return as_reply("Choose an AI employee, then send: /ask <agent_id> <question>", agents_keyboard(agents))
+        return as_reply("Выбери AI-сотрудника, затем отправь: /ask <agent_id> <вопрос>", agents_keyboard(agents))
     if callback_data == "menu:meeting":
         return as_reply(
-            "Send one of these:\n/meeting <topic>\n/meeting systems,electrical,manufacturing <topic>",
+            "Отправь одну из команд:\n/meeting <тема>\n/meeting systems,electrical,manufacturing <тема>",
             main_menu_keyboard(),
         )
     if callback_data.startswith("agent:"):
         agent_id = callback_data[len("agent:") :]
         agent = find_agent(agents, agent_id)
         if not agent:
-            return as_reply(f"Unknown agent: {agent_id}", agents_keyboard(agents))
+            return as_reply(f"Неизвестный агент: {agent_id}", agents_keyboard(agents))
         return as_reply(
-            f"{agent.name}\n\nFocus: {agent.focus}\n\nSend:\n/ask {agent.id} <your question>",
+            f"{agent.name}\n\nФокус: {agent.focus}\n\nОтправь:\n/ask {agent.id} <твой вопрос>",
             after_answer_keyboard(),
         )
-    return as_reply("Unknown button action.", main_menu_keyboard())
+    return as_reply("Неизвестное действие кнопки.", main_menu_keyboard())
 
 
 def parse_meeting_request(rest: str, agents: list[AgentProfile]) -> tuple[list[AgentProfile], str, str | None]:
@@ -344,9 +353,9 @@ def parse_meeting_request(rest: str, agents: list[AgentProfile]) -> tuple[list[A
             else:
                 unknown.append(raw_agent_id.strip())
         if unknown:
-            return [], possible_topic, f"Unknown meeting agent(s): {', '.join(unknown)}"
+            return [], possible_topic, f"Неизвестные участники совещания: {', '.join(unknown)}"
         if not selected_agents:
-            return [], possible_topic, "No valid meeting agents selected."
+            return [], possible_topic, "Не выбрано ни одного корректного агента для совещания."
         return selected_agents, possible_topic.strip(), None
     return agents, rest.strip(), None
 
@@ -366,8 +375,8 @@ def handle_text(
         return as_reply(HELP_TEXT, main_menu_keyboard())
     if stripped == "/whoami":
         if user_id is None:
-            return as_reply("Telegram user id is unavailable in this context.", main_menu_keyboard())
-        return as_reply(f"Your Telegram user id: {user_id}", main_menu_keyboard())
+            return as_reply("Telegram user id недоступен в этом контексте.", main_menu_keyboard())
+        return as_reply(f"Твой Telegram user id: {user_id}", main_menu_keyboard())
     if stripped == "/status":
         return as_reply(render_status(mode, agents, allowed_user_ids), main_menu_keyboard())
     if stripped == "/agents":
@@ -375,11 +384,11 @@ def handle_text(
     if stripped.startswith("/ask "):
         rest = stripped[len("/ask ") :].strip()
         if " " not in rest:
-            return as_reply("Use: /ask <agent_id> <question>", agents_keyboard(agents))
+            return as_reply("Используй: /ask <agent_id> <вопрос>", agents_keyboard(agents))
         agent_id, question = rest.split(" ", 1)
         agent = find_agent(agents, agent_id)
         if not agent:
-            return as_reply(f"Unknown agent: {agent_id}\n\n{render_agents(agents)}", agents_keyboard(agents))
+            return as_reply(f"Неизвестный агент: {agent_id}\n\n{render_agents(agents)}", agents_keyboard(agents))
         return as_reply(ask_agent(agent, question, llm_client, prompts_path), after_answer_keyboard())
     if stripped.startswith("/meeting "):
         rest = stripped[len("/meeting ") :].strip()
@@ -387,9 +396,9 @@ def handle_text(
         if error:
             return as_reply(f"{error}\n\n{render_agents(agents)}", agents_keyboard(agents))
         if not topic:
-            return as_reply("Use: /meeting <topic> or /meeting <agent_id,agent_id> <topic>", main_menu_keyboard())
+            return as_reply("Используй: /meeting <тема> или /meeting <agent_id,agent_id> <тема>", main_menu_keyboard())
         return as_reply(run_meeting(meeting_agents, topic, llm_client, prompts_path), after_answer_keyboard())
-    return as_reply("I did not understand the command.\n\n" + HELP_TEXT, main_menu_keyboard())
+    return as_reply("Я не понял команду.\n\n" + HELP_TEXT, main_menu_keyboard())
 
 
 def run_bot(config: TelegramConfig) -> None:
@@ -424,7 +433,7 @@ def run_bot(config: TelegramConfig) -> None:
                     chat_id = int(message["chat"]["id"])
                     if config.allowed_user_ids is not None and user_id not in config.allowed_user_ids:
                         api.answer_callback_query(callback_id)
-                        api.send_message(chat_id, "Access denied.")
+                        api.send_message(chat_id, "Доступ запрещен.")
                         continue
                     try:
                         reply = handle_callback(
@@ -435,7 +444,7 @@ def run_bot(config: TelegramConfig) -> None:
                             allowed_user_ids=config.allowed_user_ids,
                         )
                     except Exception as exc:
-                        reply = as_reply(f"Error: {exc}")
+                        reply = as_reply(f"Ошибка: {exc}")
                     try:
                         api.answer_callback_query(callback_id)
                         api.send_message(chat_id, reply.text, reply.reply_markup)
@@ -453,7 +462,7 @@ def run_bot(config: TelegramConfig) -> None:
             user_id = int(from_user["id"])
             chat_id = int(chat["id"])
             if config.allowed_user_ids is not None and user_id not in config.allowed_user_ids:
-                api.send_message(chat_id, "Access denied.")
+                api.send_message(chat_id, "Доступ запрещен.")
                 continue
             try:
                 reply = handle_text(
@@ -466,7 +475,7 @@ def run_bot(config: TelegramConfig) -> None:
                     allowed_user_ids=config.allowed_user_ids,
                 )
             except Exception as exc:
-                reply = as_reply(f"Error: {exc}")
+                reply = as_reply(f"Ошибка: {exc}")
             try:
                 api.send_message(chat_id, reply.text, reply.reply_markup)
             except (HTTPError, URLError, TimeoutError, SocketTimeout) as exc:
