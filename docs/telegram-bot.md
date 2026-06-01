@@ -29,6 +29,16 @@ $env:PYTHONPATH = "src"
 python -m ai_engineering_platform telegram-bot
 ```
 
+Before starting the long-running bot, check Telegram connectivity:
+
+```powershell
+$env:PYTHONPATH = "src"
+$env:TELEGRAM_BOT_TOKEN = "token-from-botfather"
+python -m ai_engineering_platform telegram-check
+```
+
+If this command times out, the machine cannot reach `api.telegram.org`. Check VPN, proxy, firewall, hosting network rules, or Telegram availability from the current network.
+
 ## Limit access to your Telegram user
 
 To avoid other people using the bot, set `TELEGRAM_ALLOWED_USER_IDS`.
@@ -81,6 +91,7 @@ $env:OPENAI_MODEL = "gpt-4.1-mini"
 ## Current limitations
 
 - The bot uses long polling, not webhooks.
+- Network timeouts are retried during polling.
 - Project memory and file uploads are not implemented yet.
 - Meetings currently call all MVP agents from `configs/agents.json`.
 - Human approval workflow is not implemented yet.

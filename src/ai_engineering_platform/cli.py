@@ -8,7 +8,7 @@ from .agents import load_agents
 from .artifacts import load_artifacts
 from .llm import MockLLMClient, OpenAICompatibleLLMClient
 from .orchestrator import build_readiness_report
-from .telegram_bot import TelegramConfig, run_bot
+from .telegram_bot import TelegramConfig, check_bot, run_bot
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -36,6 +36,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.getenv("AI_ENGINEERING_BOT_MODE", "mock-llm"),
         help="Bot analysis mode. Use mock-llm for local testing or llm for an OpenAI-compatible API.",
     )
+
+    subparsers.add_parser("telegram-check", help="Check Telegram bot token and connectivity.")
     return parser
 
 
@@ -67,3 +69,6 @@ def main() -> None:
             allowed_user_ids=config.allowed_user_ids,
         )
         run_bot(config)
+    elif args.command == "telegram-check":
+        config = TelegramConfig.from_env()
+        print(check_bot(config))

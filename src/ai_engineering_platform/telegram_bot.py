@@ -5,7 +5,9 @@ import json
 import os
 import time
 from pathlib import Path
+from socket import timeout as SocketTimeout
 from urllib import parse, request
+from urllib.error import HTTPError, URLError
 
 from .agents import AgentProfile, load_agents
 from .llm import LLMClient, MockLLMClient, OpenAICompatibleLLMClient
@@ -76,6 +78,13 @@ class TelegramAPI:
         with request.urlopen(url, timeout=35) as response:
             data = json.loads(response.read().decode("utf-8"))
         return data.get("result", [])
+
+    def get_me(self) -> dict[str, object]:
+        data = self.call("getMe")
+        result = data.get("result")
+        if not isinstance(result, dict):
+            raise RuntimeError(f"Unexpected Telegram getMe response: {data}")
+        return result
 
     def send_message(self, chat_id: int, text: str) -> None:
         for chunk in split_telegram_message(text):
@@ -194,7 +203,12 @@ def run_bot(config: TelegramConfig) -> None:
     offset: int | None = None
     print("Telegram bot is running. Press Ctrl+C to stop.")
     while True:
-        updates = api.get_updates(offset)
+        try:
+            updates = api.get_updates(offset)
+        except (HTTPError, URLError, TimeoutError, SocketTimeout) as exc:
+            print(f"Telegram polling error: {exc}. Retrying in 10 seconds...")
+            time.sleep(10)
+            continue
         for update in updates:
             offset = int(update["update_id"]) + 1
             message = update.get("message")
@@ -214,5 +228,16 @@ def run_bot(config: TelegramConfig) -> None:
                 response = handle_text(text, agents, llm_client, config.prompts_path)
             except Exception as exc:
                 response = f"Error: {exc}"
-            api.send_message(chat_id, response)
+            try:
+                api.send_message(chat_id, response)
+            except (HTTPError, URLError, TimeoutError, SocketTimeout) as exc:
+                print(f"Telegram sendMessage error: {exc}.")
         time.sleep(config.poll_interval_seconds)
+
+
+def check_bot(config: TelegramConfig) -> str:
+    api = TelegramAPI(config.token)
+    bot_info = api.get_me()
+    username = bot_info.get("username", "<unknown>")
+    bot_id = bot_info.get("id", "<unknown>")
+    return f"Telegram bot connection OK: @{username} (id: {bot_id})"

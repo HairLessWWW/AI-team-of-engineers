@@ -2,7 +2,7 @@ import unittest
 
 from ai_engineering_platform.agents import AgentProfile
 from ai_engineering_platform.llm import MockLLMClient
-from ai_engineering_platform.telegram_bot import find_agent, handle_text, render_agents, split_telegram_message
+from ai_engineering_platform.telegram_bot import TelegramConfig, find_agent, handle_text, render_agents, split_telegram_message
 
 
 class TelegramBotTest(unittest.TestCase):
@@ -44,6 +44,16 @@ class TelegramBotTest(unittest.TestCase):
         chunks = split_telegram_message("a" * 5000, limit=1000)
         self.assertEqual(len(chunks), 5)
         self.assertTrue(all(len(chunk) <= 1000 for chunk in chunks))
+
+    def test_allowed_user_ids_from_env(self) -> None:
+        with unittest.mock.patch.dict(
+            "os.environ",
+            {"TELEGRAM_BOT_TOKEN": "token", "TELEGRAM_ALLOWED_USER_IDS": "1, 2"},
+            clear=True,
+        ):
+            config = TelegramConfig.from_env()
+
+        self.assertEqual(config.allowed_user_ids, {1, 2})
 
 
 if __name__ == "__main__":
