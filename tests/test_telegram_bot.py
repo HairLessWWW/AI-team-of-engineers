@@ -95,6 +95,7 @@ class TelegramBotTest(unittest.TestCase):
         self.assertIn("Bot test", response.text)
         self.assertIn("What blocks pilot production", response.text)
         self.assertIsNotNone(response.reply_markup)
+        self.assertIn("post:menu:agents", str(response.reply_markup))
 
     def test_plain_text_goes_to_selected_agent(self) -> None:
         session = BotSession(mode="agent", selected_agent_id="electrical")
@@ -160,6 +161,17 @@ class TelegramBotTest(unittest.TestCase):
         self.assertEqual(session.mode, "agent")
         self.assertEqual(session.selected_agent_id, "electrical")
         self.assertIn("Чат со специалистом", response.text)
+
+    def test_post_callback_uses_same_logic_for_new_navigation_message(self) -> None:
+        response = handle_callback(
+            "post:menu:agents",
+            self.agents,
+            mode="mock-llm",
+            user_id=123,
+            allowed_user_ids=None,
+        )
+        self.assertIn("Специалисты", response.text)
+        self.assertIn("agent:electrical", str(response.reply_markup))
 
     def test_meeting_selection_toggle(self) -> None:
         session = BotSession()

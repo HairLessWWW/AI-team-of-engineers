@@ -379,14 +379,14 @@ def agent_profile_keyboard(agent: AgentProfile) -> dict[str, object]:
 def after_answer_keyboard(agent_id: str | None = None) -> dict[str, object]:
     rows = []
     if agent_id:
-        rows.append([{"text": "Продолжить с этим специалистом", "callback_data": f"chat:{agent_id}"}])
+        rows.append([{"text": "Продолжить с этим специалистом", "callback_data": f"post:chat:{agent_id}"}])
     rows.append(
         [
-            {"text": "Другой специалист", "callback_data": "menu:agents"},
-            {"text": "Совещание", "callback_data": "meeting:start"},
+            {"text": "Другой специалист", "callback_data": "post:menu:agents"},
+            {"text": "Совещание", "callback_data": "post:meeting:start"},
         ]
     )
-    rows.append([{"text": "Главное меню", "callback_data": "menu:start"}])
+    rows.append([{"text": "Главное меню", "callback_data": "post:menu:start"}])
     return {"inline_keyboard": rows}
 
 
@@ -473,6 +473,8 @@ def handle_callback(
     session: BotSession | None = None,
 ) -> BotReply:
     session = session or BotSession()
+    if callback_data.startswith("post:"):
+        callback_data = callback_data[len("post:") :]
     if callback_data == "menu:start":
         session.mode = "idle"
         session.selected_agent_id = None
@@ -737,7 +739,10 @@ def run_bot(config: TelegramConfig) -> None:
                         reply = as_reply(f"Ошибка: {exc}")
                     try:
                         api.answer_callback_query(callback_id)
-                        api.edit_message_text(chat_id, message_id, reply.text, reply.reply_markup)
+                        if callback_data.startswith("post:"):
+                            api.send_message(chat_id, reply.text, reply.reply_markup)
+                        else:
+                            api.edit_message_text(chat_id, message_id, reply.text, reply.reply_markup)
                     except (HTTPError, URLError, TimeoutError, SocketTimeout) as exc:
                         print(f"Telegram callback handling error: {exc}.")
                 continue
