@@ -60,6 +60,38 @@ $env:TELEGRAM_ALLOWED_USER_IDS = "123456789"
 $env:TELEGRAM_ALLOWED_USER_IDS = "123456789,987654321"
 ```
 
+## База пользователей и роли
+
+Для нескольких уровней доступа включи SQLite-базу:
+
+```powershell
+$env:TELEGRAM_ACCESS_DB = "work/access.db"
+$env:TELEGRAM_OWNER_IDS = "123456789"
+```
+
+На сервере:
+
+```bash
+TELEGRAM_ACCESS_DB=/var/lib/ai-team-of-engineers/access.db
+TELEGRAM_OWNER_IDS=123456789
+```
+
+Роли:
+
+- `owner` - полный доступ, управление пользователями;
+- `admin` - управление пользователями;
+- `member` - обычное использование бота;
+- `viewer` - пока имеет доступ к боту, но зарезервирован для будущего read-only режима.
+
+Команды управления:
+
+```text
+/users
+/allow <telegram_id> [owner|admin|member|viewer]
+/deny <telegram_id>
+/role <telegram_id> <owner|admin|member|viewer>
+```
+
 ## Команды
 
 ```text

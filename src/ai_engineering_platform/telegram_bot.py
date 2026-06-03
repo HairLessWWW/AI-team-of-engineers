@@ -9,6 +9,7 @@ from socket import timeout as SocketTimeout
 from urllib import parse, request
 from urllib.error import HTTPError, URLError
 
+from .access_control import AccessStore, ROLES, seed_owner_users
 from .agents import AgentProfile, load_agents
 from .llm import DeepSeekLLMClient, LLMClient, MockLLMClient, OpenAICompatibleLLMClient
 from .prompts import load_agent_prompt
@@ -20,6 +21,10 @@ HELP_TEXT = """AI Team of Engineers
 /start - показать меню
 /whoami - показать твой Telegram user id
 /status - статус бота
+/users - список пользователей, admin
+/allow <telegram_id> [role] - добавить пользователя, admin
+/deny <telegram_id> - отключить пользователя, admin
+/role <telegram_id> <role> - изменить роль, admin
 /agents - список AI-сотрудников
 /ask <agent_id> <вопрос> - задать вопрос одному AI-сотруднику
 /meeting <тема> - собрать совещание всех MVP-агентов
@@ -63,6 +68,8 @@ class TelegramConfig:
     prompts_path: Path = Path("prompts")
     mode: str = "mock-llm"
     allowed_user_ids: set[int] | None = None
+    owner_user_ids: set[int] | None = None
+    access_db_path: Path | None = None
     poll_interval_seconds: float = 1.0
 
     @classmethod
@@ -74,10 +81,19 @@ class TelegramConfig:
         allowed_user_ids = None
         if allowed_ids_raw:
             allowed_user_ids = {int(item.strip()) for item in allowed_ids_raw.split(",") if item.strip()}
+        owner_ids_raw = os.getenv("TELEGRAM_OWNER_IDS", "").strip()
+        owner_user_ids = None
+        if owner_ids_raw:
+            owner_user_ids = {int(item.strip()) for item in owner_ids_raw.split(",") if item.strip()}
+        elif allowed_user_ids:
+            owner_user_ids = set(allowed_user_ids)
+        access_db_raw = os.getenv("TELEGRAM_ACCESS_DB", "").strip()
         return cls(
             token=token,
             mode=os.getenv("AI_ENGINEERING_BOT_MODE", "mock-llm"),
             allowed_user_ids=allowed_user_ids,
+            owner_user_ids=owner_user_ids,
+            access_db_path=Path(access_db_raw) if access_db_raw else None,
         )
 
 
@@ -200,17 +216,18 @@ def complete_safely(llm_client: LLMClient, messages: list[dict[str, str]]) -> st
 def ask_agent(agent: AgentProfile, question: str, llm_client: LLMClient, prompts_path: Path | None) -> str:
     role_prompt = load_agent_prompt(agent.id, prompts_path)
     system_prompt = (
-        "You are an AI engineering employee in a robotics company. "
-        "Answer as a lead specialist. Separate facts, assumptions, risks, questions, and recommendations. "
-        "Do not approve safety-critical or production decisions."
+        "Ты AI-сотрудник робототехнической компании. Отвечай на русском языке как ведущий специалист. "
+        "Пиши структурно и прикладно. Отделяй факты, предположения, риски, открытые вопросы, рекомендации "
+        "и решения, которые требуют подтверждения человеком. "
+        "Не утверждай safety-critical и production решения самостоятельно."
     )
     if role_prompt:
-        system_prompt = f"{system_prompt}\n\nRole-specific instructions:\n{role_prompt}"
+        system_prompt = f"{system_prompt}\n\nРолевые инструкции:\n{role_prompt}"
     return complete_safely(
         llm_client,
         [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Agent: {agent.name}\nFocus: {agent.focus}\nQuestion: {question}"},
+            {"role": "user", "content": f"Агент: {agent.name}\nФокус: {agent.focus}\nВопрос: {question}"},
         ],
     )
 
@@ -218,17 +235,17 @@ def ask_agent(agent: AgentProfile, question: str, llm_client: LLMClient, prompts
 def run_meeting(agents: list[AgentProfile], topic: str, llm_client: LLMClient, prompts_path: Path | None) -> str:
     sections = [f"# Engineering Meeting\n\nTopic: {topic}\n"]
     for agent in agents:
-        response = ask_agent(agent, f"Give your position for this engineering meeting: {topic}", llm_client, prompts_path)
+        response = ask_agent(agent, f"Дай свою позицию для инженерного совещания по теме: {topic}", llm_client, prompts_path)
         sections.append(f"## {agent.name}\n\n{response}\n")
     summary_prompt = (
-        "Summarize this engineering meeting for the CTO. Include consensus, disagreements, risks, open questions, "
-        "and next actions. Do not claim final approval.\n\n"
+        "Суммируй это инженерное совещание для CTO на русском языке. Включи консенсус, разногласия, риски, "
+        "открытые вопросы и следующие действия. Не заявляй финальное утверждение.\n\n"
         + "\n\n".join(sections)
     )
     summary = complete_safely(
         llm_client,
         [
-            {"role": "system", "content": "You are CTO Control Tower for a robotics engineering organization."},
+            {"role": "system", "content": "Ты CTO Control Tower робототехнической инженерной организации. Отвечай на русском языке."},
             {"role": "user", "content": summary_prompt},
         ],
     )
@@ -302,6 +319,27 @@ def render_status(mode: str, agents: list[AgentProfile], allowed_user_ids: set[i
     )
 
 
+def render_users(access_store: AccessStore | None) -> str:
+    if access_store is None:
+        return "База доступа не включена. Используется TELEGRAM_ALLOWED_USER_IDS."
+    users = access_store.list_users()
+    if not users:
+        return "В базе доступа пока нет пользователей."
+    lines = ["Пользователи:"]
+    for user in users:
+        status = "active" if user.is_active else "disabled"
+        lines.append(f"- {user.telegram_id}: {user.role}, {status}")
+    return "\n".join(lines)
+
+
+def require_admin(access_store: AccessStore | None, user_id: int | None) -> str | None:
+    if access_store is None:
+        return "Команда доступна только при включенной базе доступа TELEGRAM_ACCESS_DB."
+    if user_id is None or not access_store.is_admin(user_id):
+        return "Недостаточно прав. Нужна роль owner или admin."
+    return None
+
+
 def as_reply(text: str, reply_markup: dict[str, object] | None = None) -> BotReply:
     return BotReply(text=text, reply_markup=reply_markup)
 
@@ -313,6 +351,7 @@ def handle_callback(
     mode: str,
     user_id: int | None,
     allowed_user_ids: set[int] | None,
+    access_store: AccessStore | None = None,
 ) -> BotReply:
     if callback_data == "menu:start":
         return as_reply(HELP_TEXT, main_menu_keyboard())
@@ -371,6 +410,7 @@ def handle_text(
     mode: str = "mock-llm",
     user_id: int | None = None,
     allowed_user_ids: set[int] | None = None,
+    access_store: AccessStore | None = None,
 ) -> BotReply:
     stripped = text.strip()
     if stripped in {"/start", "/help"}:
@@ -381,6 +421,47 @@ def handle_text(
         return as_reply(f"Твой Telegram user id: {user_id}", main_menu_keyboard())
     if stripped == "/status":
         return as_reply(render_status(mode, agents, allowed_user_ids), main_menu_keyboard())
+    if stripped == "/users":
+        denied = require_admin(access_store, user_id)
+        if denied:
+            return as_reply(denied, main_menu_keyboard())
+        return as_reply(render_users(access_store), main_menu_keyboard())
+    if stripped.startswith("/allow "):
+        denied = require_admin(access_store, user_id)
+        if denied:
+            return as_reply(denied, main_menu_keyboard())
+        parts = stripped.split()
+        if len(parts) not in {2, 3}:
+            return as_reply("Используй: /allow <telegram_id> [owner|admin|member|viewer]", main_menu_keyboard())
+        role = parts[2] if len(parts) == 3 else "member"
+        if role not in ROLES:
+            return as_reply(f"Неизвестная роль: {role}. Доступные роли: {', '.join(ROLES)}", main_menu_keyboard())
+        assert access_store is not None
+        access_store.ensure_user(int(parts[1]), role=role, is_active=True)
+        return as_reply(f"Пользователь {parts[1]} добавлен с ролью {role}.", main_menu_keyboard())
+    if stripped.startswith("/deny "):
+        denied = require_admin(access_store, user_id)
+        if denied:
+            return as_reply(denied, main_menu_keyboard())
+        parts = stripped.split()
+        if len(parts) != 2:
+            return as_reply("Используй: /deny <telegram_id>", main_menu_keyboard())
+        assert access_store is not None
+        access_store.set_active(int(parts[1]), False)
+        return as_reply(f"Пользователь {parts[1]} отключен.", main_menu_keyboard())
+    if stripped.startswith("/role "):
+        denied = require_admin(access_store, user_id)
+        if denied:
+            return as_reply(denied, main_menu_keyboard())
+        parts = stripped.split()
+        if len(parts) != 3:
+            return as_reply("Используй: /role <telegram_id> <owner|admin|member|viewer>", main_menu_keyboard())
+        role = parts[2]
+        if role not in ROLES:
+            return as_reply(f"Неизвестная роль: {role}. Доступные роли: {', '.join(ROLES)}", main_menu_keyboard())
+        assert access_store is not None
+        access_store.set_role(int(parts[1]), role)
+        return as_reply(f"Пользователю {parts[1]} назначена роль {role}.", main_menu_keyboard())
     if stripped == "/agents":
         return as_reply(render_agents(agents), agents_keyboard(agents))
     if stripped.startswith("/ask "):
@@ -407,6 +488,9 @@ def run_bot(config: TelegramConfig) -> None:
     api = TelegramAPI(config.token)
     agents = load_agents(config.agents_path)
     llm_client = build_llm_client(config.mode)
+    access_store = AccessStore(config.access_db_path) if config.access_db_path else None
+    if access_store and config.owner_user_ids:
+        seed_owner_users(access_store, config.owner_user_ids)
     offset: int | None = None
     print("Telegram bot is running. Press Ctrl+C to stop.")
     while True:
@@ -433,7 +517,11 @@ def run_bot(config: TelegramConfig) -> None:
                 ):
                     user_id = int(from_user["id"])
                     chat_id = int(message["chat"]["id"])
-                    if config.allowed_user_ids is not None and user_id not in config.allowed_user_ids:
+                    if access_store is not None and not access_store.is_allowed(user_id):
+                        api.answer_callback_query(callback_id)
+                        api.send_message(chat_id, f"Доступ запрещен. Твой Telegram user id: {user_id}")
+                        continue
+                    if access_store is None and config.allowed_user_ids is not None and user_id not in config.allowed_user_ids:
                         api.answer_callback_query(callback_id)
                         api.send_message(chat_id, "Доступ запрещен.")
                         continue
@@ -444,6 +532,7 @@ def run_bot(config: TelegramConfig) -> None:
                             mode=config.mode,
                             user_id=user_id,
                             allowed_user_ids=config.allowed_user_ids,
+                            access_store=access_store,
                         )
                     except Exception as exc:
                         reply = as_reply(f"Ошибка: {exc}")
@@ -463,7 +552,10 @@ def run_bot(config: TelegramConfig) -> None:
                 continue
             user_id = int(from_user["id"])
             chat_id = int(chat["id"])
-            if config.allowed_user_ids is not None and user_id not in config.allowed_user_ids:
+            if access_store is not None and not access_store.is_allowed(user_id):
+                api.send_message(chat_id, f"Доступ запрещен. Твой Telegram user id: {user_id}")
+                continue
+            if access_store is None and config.allowed_user_ids is not None and user_id not in config.allowed_user_ids:
                 api.send_message(chat_id, "Доступ запрещен.")
                 continue
             try:
@@ -475,6 +567,7 @@ def run_bot(config: TelegramConfig) -> None:
                     mode=config.mode,
                     user_id=user_id,
                     allowed_user_ids=config.allowed_user_ids,
+                    access_store=access_store,
                 )
             except Exception as exc:
                 reply = as_reply(f"Ошибка: {exc}")

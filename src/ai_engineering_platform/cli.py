@@ -69,6 +69,8 @@ def main() -> None:
             prompts_path=args.prompts,
             mode=args.mode,
             allowed_user_ids=config.allowed_user_ids,
+            owner_user_ids=config.owner_user_ids,
+            access_db_path=config.access_db_path,
         )
         run_bot(config)
     elif args.command == "telegram-check":

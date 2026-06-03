@@ -273,6 +273,24 @@ Acceptance criteria:
 - Модель по умолчанию `deepseek-v4-flash`.
 - Документация deployment обновлена.
 
+### M4-00D. Добавить базу доступа Telegram users
+
+Priority: high
+
+Status: done
+
+Description:
+
+Добавить SQLite-базу пользователей и роли доступа для Telegram-бота.
+
+Acceptance criteria:
+
+- Есть `TELEGRAM_ACCESS_DB`.
+- Есть `TELEGRAM_OWNER_IDS`.
+- Поддерживаются роли `owner`, `admin`, `member`, `viewer`.
+- Есть команды `/users`, `/allow`, `/deny`, `/role`.
+- Старый `TELEGRAM_ALLOWED_USER_IDS` остается совместимым fallback.
+
 ### M4-01. Создать web dashboard prototype
 
 Priority: medium

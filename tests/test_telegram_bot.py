@@ -1,6 +1,9 @@
 import unittest
 from urllib.error import HTTPError
+from pathlib import Path
+import tempfile
 
+from ai_engineering_platform.access_control import AccessStore
 from ai_engineering_platform.agents import AgentProfile
 from ai_engineering_platform.llm import MockLLMClient
 from ai_engineering_platform.telegram_bot import (
@@ -162,6 +165,42 @@ class TelegramBotTest(unittest.TestCase):
         with unittest.mock.patch.dict("os.environ", {}, clear=True):
             with self.assertRaises(RuntimeError):
                 build_llm_client("deepseek")
+
+    def test_users_command_requires_admin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = AccessStore(Path(tmp) / "access.db")
+            store.ensure_user(1, role="member")
+
+            response = handle_text(
+                "/users",
+                self.agents,
+                MockLLMClient(),
+                prompts_path=None,
+                user_id=1,
+                access_store=store,
+            )
+
+        self.assertIn("Недостаточно прав", response.text)
+
+    def test_allow_command_adds_user(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = AccessStore(Path(tmp) / "access.db")
+            store.ensure_user(1, role="owner")
+
+            response = handle_text(
+                "/allow 2 admin",
+                self.agents,
+                MockLLMClient(),
+                prompts_path=None,
+                user_id=1,
+                access_store=store,
+            )
+            added = store.get_user(2)
+
+        self.assertIn("добавлен", response.text)
+        self.assertIsNotNone(added)
+        assert added is not None
+        self.assertEqual(added.role, "admin")
 
 
 if __name__ == "__main__":

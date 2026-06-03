@@ -61,6 +61,8 @@ Example:
 ```bash
 TELEGRAM_BOT_TOKEN=replace-with-botfather-token
 TELEGRAM_ALLOWED_USER_IDS=123456789
+TELEGRAM_OWNER_IDS=123456789
+TELEGRAM_ACCESS_DB=/var/lib/ai-team-of-engineers/access.db
 AI_ENGINEERING_BOT_MODE=mock-llm
 PYTHONPATH=/opt/ai-team-of-engineers/src
 ```
