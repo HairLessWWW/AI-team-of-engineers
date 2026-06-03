@@ -3,7 +3,20 @@ import json
 import tempfile
 import unittest
 
-from ai_engineering_platform.web_control import init_web_db, list_projects, save_agent, save_project, save_rule, list_rules
+from ai_engineering_platform.web_control import (
+    authenticate_user,
+    hash_password,
+    init_web_db,
+    list_projects,
+    list_rules,
+    list_web_users,
+    save_agent,
+    save_project,
+    save_rule,
+    save_web_user,
+    seed_admin_user,
+    verify_password,
+)
 
 
 class WebControlTest(unittest.TestCase):
@@ -62,6 +75,37 @@ class WebControlTest(unittest.TestCase):
 
         self.assertEqual(len(rules), 1)
         self.assertEqual(rules[0]["scope"], "safety")
+
+    def test_password_hash_roundtrip(self) -> None:
+        stored = hash_password("secret")
+
+        self.assertTrue(verify_password("secret", stored))
+        self.assertFalse(verify_password("wrong", stored))
+        self.assertNotIn("secret", stored)
+
+    def test_seed_admin_and_authenticate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "web.db"
+            init_web_db(db_path)
+            seed_admin_user(db_path, "secret")
+            user = authenticate_user(db_path, "admin", "secret")
+            users = list_web_users(db_path)
+
+        self.assertIsNotNone(user)
+        assert user is not None
+        self.assertEqual(user["role"], "owner")
+        self.assertEqual(len(users), 1)
+
+    def test_save_web_user(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "web.db"
+            init_web_db(db_path)
+            save_web_user(db_path, {"username": ["engineer"], "password": ["pw"], "role": ["member"], "is_active": ["1"]})
+            user = authenticate_user(db_path, "engineer", "pw")
+
+        self.assertIsNotNone(user)
+        assert user is not None
+        self.assertEqual(user["role"], "member")
 
 
 if __name__ == "__main__":

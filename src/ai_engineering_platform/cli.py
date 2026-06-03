@@ -92,6 +92,7 @@ def main() -> None:
             host=config.host,
             port=config.port,
             password=config.password,
+            session_secret=config.session_secret,
             agents_path=args.agents,
             prompts_path=args.prompts,
             web_db_path=config.web_db_path,

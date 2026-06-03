@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from html import escape
+import hashlib
+import hmac
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import base64
@@ -26,6 +28,7 @@ class WebConfig:
     host: str = "127.0.0.1"
     port: int = 8080
     password: str = "change-me"
+    session_secret: str = "change-me"
     agents_path: Path = Path("configs/agents.json")
     prompts_path: Path = Path("prompts")
     web_db_path: Path = DEFAULT_WEB_DB
@@ -39,6 +42,7 @@ class WebConfig:
             host=os.getenv("AI_ENGINEERING_WEB_HOST", "127.0.0.1"),
             port=int(os.getenv("AI_ENGINEERING_WEB_PORT", "8080")),
             password=os.getenv("AI_ENGINEERING_WEB_PASSWORD", "change-me"),
+            session_secret=os.getenv("AI_ENGINEERING_WEB_SESSION_SECRET", os.getenv("AI_ENGINEERING_WEB_PASSWORD", "change-me")),
             agents_path=Path(os.getenv("AI_ENGINEERING_AGENTS_PATH", "configs/agents.json")),
             prompts_path=Path(os.getenv("AI_ENGINEERING_PROMPTS_PATH", "prompts")),
             web_db_path=Path(os.getenv("AI_ENGINEERING_WEB_DB", str(DEFAULT_WEB_DB))),
@@ -82,6 +86,102 @@ def init_web_db(db_path: Path) -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS web_users (
+                username TEXT PRIMARY KEY,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            """
+        )
+
+
+def seed_admin_user(db_path: Path, password: str) -> None:
+    now = int(time.time())
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute("SELECT username FROM web_users WHERE username = 'admin'").fetchone()
+        if row is None:
+            connection.execute(
+                """
+                INSERT INTO web_users (username, password_hash, role, is_active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                ("admin", hash_password(password), "owner", 1, now, now),
+            )
+
+
+def hash_password(password: str, salt: str | None = None) -> str:
+    salt = salt or base64.urlsafe_b64encode(os.urandom(16)).decode("ascii")
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120_000)
+    return f"pbkdf2_sha256${salt}${base64.urlsafe_b64encode(digest).decode('ascii')}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    try:
+        algorithm, salt, expected = stored.split("$", 2)
+    except ValueError:
+        return False
+    if algorithm != "pbkdf2_sha256":
+        return False
+    return hmac.compare_digest(hash_password(password, salt), stored)
+
+
+def authenticate_user(db_path: Path, username: str, password: str) -> dict[str, str] | None:
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT username, password_hash, role, is_active FROM web_users WHERE username = ?",
+            (username,),
+        ).fetchone()
+    if row is None or not int(row[3]) or not verify_password(password, str(row[1])):
+        return None
+    return {"username": str(row[0]), "role": str(row[2])}
+
+
+def list_web_users(db_path: Path) -> list[dict[str, Any]]:
+    with sqlite3.connect(db_path) as connection:
+        rows = connection.execute(
+            "SELECT username, role, is_active, created_at, updated_at FROM web_users ORDER BY role, username"
+        ).fetchall()
+    return [
+        {"username": row[0], "role": row[1], "is_active": bool(row[2]), "created_at": row[3], "updated_at": row[4]}
+        for row in rows
+    ]
+
+
+def save_web_user(db_path: Path, form: dict[str, list[str]]) -> None:
+    now = int(time.time())
+    username = first(form, "username")
+    password = first(form, "password")
+    role = first(form, "role") or "member"
+    is_active = 1 if first(form, "is_active") != "0" else 0
+    if not username:
+        raise ValueError("username is required")
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute("SELECT username FROM web_users WHERE username = ?", (username,)).fetchone()
+        if row is None:
+            if not password:
+                raise ValueError("password is required for new user")
+            connection.execute(
+                """
+                INSERT INTO web_users (username, password_hash, role, is_active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (username, hash_password(password), role, is_active, now, now),
+            )
+        elif password:
+            connection.execute(
+                "UPDATE web_users SET password_hash = ?, role = ?, is_active = ?, updated_at = ? WHERE username = ?",
+                (hash_password(password), role, is_active, now, username),
+            )
+        else:
+            connection.execute(
+                "UPDATE web_users SET role = ?, is_active = ?, updated_at = ? WHERE username = ?",
+                (role, is_active, now, username),
+            )
 
 
 def connect_existing(db_path: Path | None) -> Connection | None:
@@ -257,6 +357,7 @@ def render_page(config: WebConfig, active: str, body: str) -> bytes:
         ("history", "История"),
         ("rules", "Правила"),
         ("settings", "Настройки"),
+        ("logout", "Выход"),
     ]
     links = "\n".join(
         f'<a class="{"active" if key == active else ""}" href="/{key}">{label}</a>' for key, label in nav
@@ -280,6 +381,32 @@ def render_page(config: WebConfig, active: str, body: str) -> bytes:
     return html.encode("utf-8")
 
 
+def render_login(error: str = "") -> bytes:
+    error_html = f"<p class='error'>{h(error)}</p>" if error else ""
+    html = f"""<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вход · AI Team Control Center</title>
+  <style>{CSS}</style>
+</head>
+<body class="login-page">
+  <main class="login-main">
+    <form class="login-card" method="post" action="/login">
+      <h1>AI Team Control Center</h1>
+      <p class="lead">Вход в кабинет управления AI-командой.</p>
+      {error_html}
+      <label>Логин<input name="username" autocomplete="username" autofocus></label>
+      <label>Пароль<input name="password" type="password" autocomplete="current-password"></label>
+      <button type="submit">Войти</button>
+    </form>
+  </main>
+</body>
+</html>"""
+    return html.encode("utf-8")
+
+
 def h(value: object) -> str:
     return escape(str(value), quote=True)
 
@@ -294,10 +421,20 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
     config: WebConfig
 
     def do_GET(self) -> None:
-        if not self.authorized():
-            self.request_auth()
-            return
         path = parse.urlparse(self.path).path.strip("/") or "dashboard"
+        if path == "login":
+            self.respond(render_login())
+            return
+        user = self.current_user()
+        if user is None:
+            self.redirect("/login")
+            return
+        if path == "logout":
+            self.send_response(HTTPStatus.SEE_OTHER)
+            self.send_header("Location", "/login")
+            self.send_header("Set-Cookie", "ai_team_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax")
+            self.end_headers()
+            return
         routes = {
             "dashboard": self.render_dashboard,
             "agents": self.render_agents,
@@ -315,44 +452,79 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
         self.respond(render_page(self.config, path, renderer()))
 
     def do_POST(self) -> None:
-        if not self.authorized():
-            self.request_auth()
-            return
         path = parse.urlparse(self.path).path
         form = self.read_form()
+        if path == "/login":
+            user = authenticate_user(self.config.web_db_path, first(form, "username"), first(form, "password"))
+            if user is None:
+                self.respond(render_login("Неверный логин или пароль."), HTTPStatus.UNAUTHORIZED)
+                return
+            self.send_response(HTTPStatus.SEE_OTHER)
+            self.send_header("Location", "/dashboard")
+            self.send_header("Set-Cookie", f"ai_team_session={self.make_session_cookie(user['username'], user['role'])}; Path=/; HttpOnly; SameSite=Lax")
+            self.end_headers()
+            return
+        user = self.current_user()
+        if user is None:
+            self.redirect("/login")
+            return
         try:
             if path == "/agents/save":
+                self.require_role(user, {"owner", "admin"})
                 save_agent(self.config.agents_path, self.config.prompts_path, form)
                 self.redirect("/agents")
                 return
             if path == "/projects/save":
+                self.require_role(user, {"owner", "admin", "member"})
                 save_project(self.config.web_db_path, form)
                 self.redirect("/projects")
                 return
             if path == "/rules/save":
+                self.require_role(user, {"owner", "admin"})
                 save_rule(self.config.web_db_path, form)
                 self.redirect("/rules")
+                return
+            if path == "/users/save":
+                self.require_role(user, {"owner", "admin"})
+                save_web_user(self.config.web_db_path, form)
+                self.redirect("/settings")
                 return
         except Exception as exc:
             self.respond(render_page(self.config, "settings", f"<h1>Ошибка</h1><p>{h(exc)}</p>"), HTTPStatus.BAD_REQUEST)
             return
         self.send_error(HTTPStatus.NOT_FOUND)
 
-    def authorized(self) -> bool:
-        header = self.headers.get("Authorization", "")
-        if not header.startswith("Basic "):
-            return False
-        try:
-            decoded = base64.b64decode(header.removeprefix("Basic ")).decode("utf-8")
-        except Exception:
-            return False
-        _, _, password = decoded.partition(":")
-        return password == self.config.password
+    def make_session_cookie(self, username: str, role: str) -> str:
+        expires = int(time.time()) + 60 * 60 * 24 * 7
+        payload = f"{username}|{role}|{expires}"
+        signature = hmac.new(self.config.session_secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+        return base64.urlsafe_b64encode(f"{payload}|{signature}".encode("utf-8")).decode("ascii")
 
-    def request_auth(self) -> None:
-        self.send_response(HTTPStatus.UNAUTHORIZED)
-        self.send_header("WWW-Authenticate", 'Basic realm="AI Team Control Center"')
-        self.end_headers()
+    def current_user(self) -> dict[str, str] | None:
+        cookie = self.headers.get("Cookie", "")
+        marker = "ai_team_session="
+        raw = ""
+        for part in cookie.split(";"):
+            part = part.strip()
+            if part.startswith(marker):
+                raw = part.removeprefix(marker)
+                break
+        if not raw:
+            return None
+        try:
+            decoded = base64.urlsafe_b64decode(raw.encode("ascii")).decode("utf-8")
+            username, role, expires_raw, signature = decoded.rsplit("|", 3)
+            payload = f"{username}|{role}|{expires_raw}"
+            expected = hmac.new(self.config.session_secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+        except Exception:
+            return None
+        if not hmac.compare_digest(signature, expected) or int(expires_raw) < int(time.time()):
+            return None
+        return {"username": username, "role": role}
+
+    def require_role(self, user: dict[str, str], roles: set[str]) -> None:
+        if user["role"] not in roles:
+            raise PermissionError("Недостаточно прав для этого действия.")
 
     def read_form(self) -> dict[str, list[str]]:
         length = int(self.headers.get("Content-Length", "0"))
@@ -452,7 +624,19 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
             "materials_db": self.config.materials_db_path,
         }
         rows = "".join(f"<tr><td>{h(key)}</td><td>{h(value or '-')}</td></tr>" for key, value in values.items())
-        return f"<h1>Настройки</h1><table><tbody>{rows}</tbody></table>"
+        users = list_web_users(self.config.web_db_path)
+        user_rows = "".join(
+            f"<tr><td>{h(user['username'])}</td><td>{h(user['role'])}</td><td>{'active' if user['is_active'] else 'disabled'}</td><td>{fmt_time(user['updated_at'])}</td></tr>"
+            for user in users
+        )
+        return f"""
+<h1>Настройки</h1>
+<h2>Пути и базы</h2>
+<table><tbody>{rows}</tbody></table>
+<h2>Пользователи веб-кабинета</h2>
+<table><thead><tr><th>Логин</th><th>Роль</th><th>Статус</th><th>Обновлен</th></tr></thead><tbody>{user_rows}</tbody></table>
+{web_user_form()}
+"""
 
 
 def metric(label: str, value: int) -> str:
@@ -544,6 +728,33 @@ def rule_form(rule: dict[str, Any] | None) -> str:
 """
 
 
+def web_user_form() -> str:
+    return """
+<form class="card" method="post" action="/users/save">
+  <h2>Добавить или обновить пользователя</h2>
+  <div class="fields">
+    <label>Логин<input name="username"></label>
+    <label>Пароль<input name="password" type="password" placeholder="оставь пустым, чтобы не менять"></label>
+    <label>Роль
+      <select name="role">
+        <option value="owner">owner</option>
+        <option value="admin">admin</option>
+        <option value="member" selected>member</option>
+        <option value="viewer">viewer</option>
+      </select>
+    </label>
+    <label>Статус
+      <select name="is_active">
+        <option value="1" selected>active</option>
+        <option value="0">disabled</option>
+      </select>
+    </label>
+  </div>
+  <button type="submit">Сохранить пользователя</button>
+</form>
+"""
+
+
 CSS = """
 :root { color-scheme: light; --ink: #1b2430; --muted: #647084; --line: #d9dee7; --bg: #f5f7fa; --panel: #ffffff; --accent: #3457d5; --ok: #1f8a5b; }
 * { box-sizing: border-box; }
@@ -571,7 +782,7 @@ h2 { font-size: 19px; margin: 0 0 16px; letter-spacing: 0; }
 .card { margin: 18px 0; }
 .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 label { display: grid; gap: 6px; font-weight: 700; color: #344054; }
-input, textarea { width: 100%; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px 11px; font: inherit; color: var(--ink); background: #fff; }
+input, textarea, select { width: 100%; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px 11px; font: inherit; color: var(--ink); background: #fff; }
 textarea { resize: vertical; min-height: 86px; }
 .wide { grid-column: 1 / -1; }
 .checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
@@ -589,12 +800,18 @@ th { background: #eef2f7; font-size: 13px; color: #344054; }
 .org { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 20px; }
 .cto { display: inline-block; background: #e7efff; border: 1px solid #b7c8ff; color: #183a8f; padding: 12px 16px; border-radius: 8px; font-weight: 800; margin-bottom: 18px; }
 .org ul { margin: 0; padding-left: 24px; display: grid; gap: 12px; }
+.login-page { display: grid; place-items: center; background: #111827; }
+.login-main { margin: 0; width: min(460px, calc(100vw - 32px)); padding: 0; }
+.login-card { background: #fff; border-radius: 8px; padding: 28px; display: grid; gap: 14px; box-shadow: 0 20px 80px rgba(0,0,0,.28); }
+.login-card h1 { font-size: 28px; }
+.error { background: #fff1f1; color: #9f1c1c; border: 1px solid #ffd0d0; padding: 10px 12px; border-radius: 6px; margin: 0; }
 @media (max-width: 900px) { body { display:block; } aside { position: static; width: 100%; } main { margin: 0; width: 100%; padding: 18px; } .metrics, .grid.two, .fields, .checks { grid-template-columns: 1fr; } .hero { display: block; } }
 """
 
 
 def run_web(config: WebConfig) -> None:
     init_web_db(config.web_db_path)
+    seed_admin_user(config.web_db_path, config.password)
     ControlCenterHandler.config = config
     server = ThreadingHTTPServer((config.host, config.port), ControlCenterHandler)
     print(f"AI Team Control Center running on http://{config.host}:{config.port}")

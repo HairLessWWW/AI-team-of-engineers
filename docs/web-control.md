@@ -19,6 +19,7 @@
 AI_ENGINEERING_WEB_HOST=127.0.0.1
 AI_ENGINEERING_WEB_PORT=8080
 AI_ENGINEERING_WEB_PASSWORD=...
+AI_ENGINEERING_WEB_SESSION_SECRET=...
 AI_ENGINEERING_WEB_DB=/var/lib/ai-team-of-engineers/control-center.db
 AI_ENGINEERING_AGENTS_PATH=/opt/ai-team-of-engineers/configs/agents.json
 AI_ENGINEERING_PROMPTS_PATH=/opt/ai-team-of-engineers/prompts
@@ -41,5 +42,14 @@ systemctl status ai-engineering-web-control
 
 ## Безопасность MVP
 
-Сейчас используется Basic Auth по паролю из `AI_ENGINEERING_WEB_PASSWORD`.
-Для production следующим шагом нужен отдельный пользователь, HTTPS и роли доступа внутри веб-кабинета.
+При первом запуске создается пользователь `admin` с паролем из `AI_ENGINEERING_WEB_PASSWORD`.
+Пароли хранятся в SQLite в виде PBKDF2-хеша, вход держится через подписанную cookie-сессию.
+
+Роли веб-кабинета:
+
+- `owner` - полный доступ;
+- `admin` - управление агентами, правилами и пользователями;
+- `member` - работа с проектами;
+- `viewer` - просмотр.
+
+Для production следующим шагом нужен HTTPS через Let's Encrypt.
