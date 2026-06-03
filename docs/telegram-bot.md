@@ -115,6 +115,7 @@ TELEGRAM_MEMORY_DEPTH=10
 
 - Word `.docx`;
 - PowerPoint `.pptx`;
+- Excel `.xlsx`;
 - `.txt`, `.md`, `.csv`, `.tsv`;
 - ссылки `http/https`.
 

@@ -184,13 +184,79 @@ def fetch_url_text(url: str, timeout_seconds: int = 20) -> str:
 
 def extract_file_text(file_path: Path, original_name: str | None = None) -> str:
     suffix = (original_name or file_path.name).lower()
+    if suffix.endswith(".xlsx"):
+        return extract_xlsx_text(file_path)
     if suffix.endswith(".docx"):
         return extract_docx_text(file_path)
     if suffix.endswith(".pptx"):
         return extract_pptx_text(file_path)
     if suffix.endswith((".txt", ".md", ".csv", ".tsv", ".log")):
         return file_path.read_text(encoding="utf-8", errors="replace")
-    raise ValueError("поддерживаются .docx, .pptx, .txt, .md, .csv, .tsv и ссылки")
+    raise ValueError("поддерживаются .xlsx, .docx, .pptx, .txt, .md, .csv, .tsv и ссылки")
+
+
+def extract_xlsx_text(file_path: Path) -> str:
+    try:
+        with ZipFile(file_path) as archive:
+            shared_strings = read_xlsx_shared_strings(archive)
+            sheet_names = sorted(
+                name for name in archive.namelist() if name.startswith("xl/worksheets/sheet") and name.endswith(".xml")
+            )
+            sheets: list[str] = []
+            for index, sheet_name in enumerate(sheet_names, start=1):
+                rows = read_xlsx_sheet_rows(archive, sheet_name, shared_strings)
+                if rows:
+                    rendered_rows = ["\t".join(row) for row in rows if any(cell for cell in row)]
+                    if rendered_rows:
+                        sheets.append(f"Лист {index}:\n" + "\n".join(rendered_rows))
+    except BadZipFile as exc:
+        raise ValueError("не удалось прочитать Excel .xlsx") from exc
+    return normalize_whitespace("\n\n".join(sheets))
+
+
+def read_xlsx_shared_strings(archive: ZipFile) -> list[str]:
+    try:
+        root = ElementTree.fromstring(archive.read("xl/sharedStrings.xml"))
+    except KeyError:
+        return []
+    strings: list[str] = []
+    for item in root.iter():
+        if not item.tag.endswith("}si"):
+            continue
+        texts = [node.text or "" for node in item.iter() if node.tag.endswith("}t")]
+        strings.append("".join(texts))
+    return strings
+
+
+def read_xlsx_sheet_rows(archive: ZipFile, sheet_name: str, shared_strings: list[str]) -> list[list[str]]:
+    root = ElementTree.fromstring(archive.read(sheet_name))
+    rows: list[list[str]] = []
+    for row_node in root.iter():
+        if not row_node.tag.endswith("}row"):
+            continue
+        cells: list[str] = []
+        for cell_node in row_node:
+            if not cell_node.tag.endswith("}c"):
+                continue
+            cells.append(read_xlsx_cell(cell_node, shared_strings))
+        rows.append(cells)
+    return rows
+
+
+def read_xlsx_cell(cell_node: ElementTree.Element, shared_strings: list[str]) -> str:
+    cell_type = cell_node.attrib.get("t", "")
+    value = ""
+    for child in cell_node:
+        if child.tag.endswith("}v") and child.text is not None:
+            value = child.text
+            break
+        if child.tag.endswith("}is"):
+            texts = [node.text or "" for node in child.iter() if node.tag.endswith("}t")]
+            return "".join(texts)
+    if cell_type == "s" and value:
+        index = int(value)
+        return shared_strings[index] if 0 <= index < len(shared_strings) else value
+    return value
 
 
 def extract_docx_text(file_path: Path) -> str:

@@ -42,7 +42,7 @@ HELP_TEXT = """AI Team of Engineers
 /meeting <agent_id,agent_id> <тема> - совещание выбранных агентов
 
 Материалы проекта:
-- пришли Word .docx, PowerPoint .pptx, .txt, .md, .csv или .tsv файлом
+- пришли Excel .xlsx, Word .docx, PowerPoint .pptx, .txt, .md, .csv или .tsv файлом
 - пришли сообщение со ссылкой http/https
 - затем выбери специалиста и задай вопрос по материалам
 
@@ -545,7 +545,7 @@ def render_materials_status(materials: ProjectMaterials | None, user_id: int | N
     lines = [
         "Материалы проекта:",
         f"- твоих материалов: {user_total}",
-        "- поддерживаются: .docx, .pptx, .txt, .md, .csv, .tsv и ссылки http/https",
+        "- поддерживаются: .xlsx, .docx, .pptx, .txt, .md, .csv, .tsv и ссылки http/https",
     ]
     if recent:
         lines.append("\nПоследние материалы:")

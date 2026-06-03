@@ -6,7 +6,9 @@ from zipfile import ZipFile
 from ai_engineering_platform.project_materials import (
     ProjectMaterials,
     extract_docx_text,
+    extract_file_text,
     extract_pptx_text,
+    extract_xlsx_text,
     extract_urls,
 )
 
@@ -52,6 +54,40 @@ class ProjectMaterialsTest(unittest.TestCase):
 
         self.assertIn("Слайд 1", text)
         self.assertIn("План сборки", text)
+
+    def test_extract_xlsx_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bom.xlsx"
+            with ZipFile(path, "w") as archive:
+                archive.writestr(
+                    "xl/sharedStrings.xml",
+                    """
+                    <sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+                        <si><t>Part</t></si>
+                        <si><t>Qty</t></si>
+                        <si><t>Motor</t></si>
+                    </sst>
+                    """,
+                )
+                archive.writestr(
+                    "xl/worksheets/sheet1.xml",
+                    """
+                    <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+                      <sheetData>
+                        <row r="1"><c t="s"><v>0</v></c><c t="s"><v>1</v></c></row>
+                        <row r="2"><c t="s"><v>2</v></c><c><v>4</v></c></row>
+                      </sheetData>
+                    </worksheet>
+                    """,
+                )
+
+            text = extract_xlsx_text(path)
+            generic_text = extract_file_text(path, "bom.xlsx")
+
+        self.assertIn("Лист 1", text)
+        self.assertIn("Part Qty", text)
+        self.assertIn("Motor 4", text)
+        self.assertIn("Motor", generic_text)
 
     def test_store_material(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
