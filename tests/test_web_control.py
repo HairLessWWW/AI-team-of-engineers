@@ -14,6 +14,7 @@ from ai_engineering_platform.web_control import (
     list_org_positions,
     list_org_structures,
     list_backlog_items,
+    list_project_artifacts,
     list_project_tasks,
     list_projects,
     list_rules,
@@ -22,6 +23,7 @@ from ai_engineering_platform.web_control import (
     save_agent_layout,
     save_backlog_item,
     save_org_structure,
+    save_project_artifact,
     save_project,
     save_project_task,
     save_rule,
@@ -255,6 +257,27 @@ class WebControlTest(unittest.TestCase):
         self.assertEqual(len(tasks), 1)
         self.assertEqual(tasks[0]["agent_id"], "electrical")
 
+    def test_save_project_artifact_roundtrip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "web.db"
+            init_web_db(db_path)
+            save_project(db_path, {"name": ["Project"], "status": ["active"], "goal": [""], "notes": [""]})
+            project = list_projects(db_path)[0]
+            save_project_artifact(
+                db_path,
+                {
+                    "project_id": [str(project["id"])],
+                    "artifact_type": ["decision"],
+                    "title": ["Freeze BOM"],
+                    "content": ["BOM v0.1 accepted"],
+                    "status": ["approved"],
+                },
+            )
+            artifacts = list_project_artifacts(db_path, project["id"], "decision")
+
+        self.assertEqual(len(artifacts), 1)
+        self.assertEqual(artifacts[0]["title"], "Freeze BOM")
+
     def test_render_project_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -273,6 +296,9 @@ class WebControlTest(unittest.TestCase):
         self.assertIn("Робот V1", html)
         self.assertIn("Задачи агентам", html)
         self.assertIn("/project/task/save", html)
+        self.assertIn("Project Cockpit", html)
+        self.assertIn("#project-artifacts", html)
+        self.assertIn("/project/artifact/save", html)
 
     def test_render_project_workspace_can_assign_material(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

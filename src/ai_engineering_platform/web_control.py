@@ -154,6 +154,20 @@ def init_web_db(db_path: Path) -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS project_artifacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                artifact_type TEXT NOT NULL DEFAULT 'artifact',
+                title TEXT NOT NULL,
+                content TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'draft',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            """
+        )
         ensure_project_material_columns(connection)
         seed_cto_structure(connection)
         seed_product_backlog(connection)
@@ -493,6 +507,61 @@ def save_project_task(db_path: Path, form: dict[str, list[str]]) -> None:
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (project_id, title, agent_id, status, result, now, now),
+            )
+
+
+def list_project_artifacts(db_path: Path, project_id: int, artifact_type: str | None = None) -> list[dict[str, Any]]:
+    query = """
+        SELECT id, project_id, artifact_type, title, content, status, created_at, updated_at
+        FROM project_artifacts
+        WHERE project_id = ?
+    """
+    params: tuple[Any, ...] = (project_id,)
+    if artifact_type is not None:
+        query += " AND artifact_type = ?"
+        params = (project_id, artifact_type)
+    query += " ORDER BY updated_at DESC, id DESC"
+    with sqlite3.connect(db_path) as connection:
+        rows = connection.execute(query, params).fetchall()
+    return [
+        {
+            "id": row[0],
+            "project_id": row[1],
+            "artifact_type": row[2],
+            "title": row[3],
+            "content": row[4],
+            "status": row[5],
+            "created_at": row[6],
+            "updated_at": row[7],
+        }
+        for row in rows
+    ]
+
+
+def save_project_artifact(db_path: Path, form: dict[str, list[str]]) -> None:
+    now = int(time.time())
+    artifact_id = first(form, "id")
+    project_id = int(first(form, "project_id"))
+    artifact_type = first(form, "artifact_type") or "artifact"
+    title = first(form, "title") or "Новый артефакт"
+    content = first(form, "content")
+    status = first(form, "status") or "draft"
+    with sqlite3.connect(db_path) as connection:
+        if artifact_id:
+            connection.execute(
+                """
+                UPDATE project_artifacts SET artifact_type = ?, title = ?, content = ?, status = ?, updated_at = ?
+                WHERE id = ? AND project_id = ?
+                """,
+                (artifact_type, title, content, status, now, int(artifact_id), project_id),
+            )
+        else:
+            connection.execute(
+                """
+                INSERT INTO project_artifacts (project_id, artifact_type, title, content, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (project_id, artifact_type, title, content, status, now, now),
             )
 
 
@@ -986,6 +1055,11 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
                 save_project_task(self.config.web_db_path, form)
                 self.redirect(f"/project?id={first(form, 'project_id')}")
                 return
+            if path == "/project/artifact/save":
+                self.require_role(user, {"owner", "admin", "member"})
+                save_project_artifact(self.config.web_db_path, form)
+                self.redirect(f"/project?id={first(form, 'project_id')}")
+                return
             if path == "/materials/assign":
                 self.require_role(user, {"owner", "admin", "member"})
                 project_raw = first(form, "project_id")
@@ -1172,6 +1246,8 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
             return "<h1>Проект не найден</h1>"
         agents = load_agents(self.config.agents_path)
         tasks = list_project_tasks(self.config.web_db_path, project["id"])
+        artifacts = list_project_artifacts(self.config.web_db_path, project["id"], "artifact")
+        decisions = list_project_artifacts(self.config.web_db_path, project["id"], "decision")
         materials = recent_materials(self.config.materials_db_path, 100, project["id"])
         available_materials = [
             material
@@ -1179,29 +1255,71 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
             if material["project_id"] in (None, project["id"])
         ]
         return f"""
-<div class="page-head">
+<section class="project-cockpit">
   <div>
+    <p class="eyebrow">Project Cockpit</p>
     <h1>{h(project['name'])}</h1>
     <p class="lead">{h(project['goal'] or 'Цель проекта не задана.')}</p>
   </div>
-  <a class="button-link" href="/projects">Все проекты</a>
-</div>
+  <div class="cockpit-actions">
+    <a class="button-link" href="#project-task-new">Запустить задачу</a>
+    <a class="button-link secondary" href="#project-artifact-new">Добавить артефакт</a>
+    <a class="button-link ghost" href="/projects">Все проекты</a>
+  </div>
+</section>
 <section class="metrics">
   {metric("Задачи", len(tasks))}
   {metric("Материалы", len(materials))}
-  {metric("AI-участники", len(project['agents']))}
+  {metric("Артефакты", len(artifacts) + len(decisions))}
   {metric("Статус", project['status'])}
 </section>
-<section class="grid two">
-  <div>{panel_title("Задачи агентам")}{project_task_list(tasks, agents)}</div>
-  <div>{panel_title("Новая задача")}{project_task_form(None, project['id'], agents)}</div>
+<nav class="tabs">
+  <a href="#project-chat">Чат</a>
+  <a href="#project-tasks">Задачи</a>
+  <a href="#project-artifacts">Артефакты</a>
+  <a href="#project-materials">Материалы</a>
+  <a href="#project-decisions">Решения</a>
+</nav>
+<section id="project-chat" class="card">
+  <div class="section-head">
+    <div>
+      <h2>Чат проекта</h2>
+      <p class="lead">Быстрый запуск обсуждения или поручения внутри проекта. История настоящего диалога появится следующим слоем.</p>
+    </div>
+    <a class="text-action" href="#project-task-new">Создать задачу</a>
+  </div>
+  {project_brief(project, agents)}
 </section>
-<section class="card">
-  <h2>Материалы</h2>
+<section id="project-tasks" class="card">
+  <div class="section-head">
+    <div><h2>Задачи агентам</h2><p class="lead">Что уже поручено AI-агентам или людям по этому проекту.</p></div>
+    <a class="text-action" href="#project-task-new">Новая задача</a>
+  </div>
+  {project_task_list(tasks, agents)}
+</section>
+<section id="project-artifacts" class="card">
+  <div class="section-head">
+    <div><h2>Артефакты</h2><p class="lead">Результаты работы: отчеты, проверки, списки рисков, протоколы, черновики документов.</p></div>
+    <a class="text-action" href="#project-artifact-new">Добавить</a>
+  </div>
+  {project_artifact_list(artifacts)}
+</section>
+<section id="project-materials" class="card">
+  <h2>Материалы проекта</h2>
   <p class="lead">Материалы, закрепленные за этим проектом. Их удобно использовать как контекст для задач AI-агентам.</p>
   {materials_table(materials[:20])}
   {material_assign_form(available_materials, project['id'], f"/project?id={project['id']}")}
 </section>
+<section id="project-decisions" class="card">
+  <div class="section-head">
+    <div><h2>Решения</h2><p class="lead">Ключевые решения человека и AI-команды, которые нельзя потерять.</p></div>
+    <a class="text-action" href="#project-decision-new">Добавить решение</a>
+  </div>
+  {project_artifact_list(decisions)}
+</section>
+{project_task_modal(project['id'], agents)}
+{project_artifact_modal('project-artifact-new', project['id'], 'artifact', 'Новый артефакт')}
+{project_artifact_modal('project-decision-new', project['id'], 'decision', 'Новое решение')}
 """
 
     def render_backlog(self) -> str:
@@ -1320,6 +1438,79 @@ def project_task_form(task: dict[str, Any] | None, project_id: int, agents: list
   <label class="wide">Результат / заметки<textarea name="result">{h(task['result'] if task else '')}</textarea></label>
   <button type="submit">Сохранить задачу</button>
 </form>
+"""
+
+
+def project_task_modal(project_id: int, agents: list[Any]) -> str:
+    return f"""
+<div id="project-task-new" class="modal">
+  <button class="modal-backdrop" type="button" data-close-modal aria-label="Закрыть"></button>
+  <div class="modal-card">
+    <div class="modal-head">
+      <div><p class="eyebrow">Запуск работы</p><h2>Новая задача проекта</h2></div>
+      <button class="close" type="button" data-close-modal aria-label="Закрыть">x</button>
+    </div>
+    {project_task_form(None, project_id, agents)}
+  </div>
+</div>
+"""
+
+
+def project_brief(project: dict[str, Any], agents: list[Any]) -> str:
+    agent_names = {agent.id: agent.name for agent in agents}
+    selected = [agent_names.get(agent_id, agent_id) for agent_id in project["agents"]]
+    team = ", ".join(selected) if selected else "AI-агенты пока не выбраны"
+    notes = project["notes"] or "Заметки проекта пока пустые."
+    return f"""
+<div class="project-brief">
+  <div><span>Команда</span><strong>{h(team)}</strong></div>
+  <div><span>Заметки</span><p>{h(notes)}</p></div>
+</div>
+"""
+
+
+def project_artifact_list(items: list[dict[str, Any]]) -> str:
+    if not items:
+        return "<p class='muted'>Пока пусто.</p>"
+    cards = []
+    for item in items:
+        cards.append(
+            f"<article class='artifact-card'><div><strong>{h(item['title'])}</strong><span>{h(item['status'])} · {fmt_time(item['updated_at'])}</span></div><p>{h(item['content'])}</p></article>"
+        )
+    return "".join(cards)
+
+
+def project_artifact_form(project_id: int, artifact_type: str, title: str) -> str:
+    return f"""
+<form class="compact-form" method="post" action="/project/artifact/save">
+  <input type="hidden" name="project_id" value="{h(project_id)}">
+  <input type="hidden" name="artifact_type" value="{h(artifact_type)}">
+  <label class="wide">Название<input name="title" placeholder="{h(title)}"></label>
+  <label>Статус
+    <select name="status">
+      <option value="draft">draft</option>
+      <option value="review">review</option>
+      <option value="approved">approved</option>
+    </select>
+  </label>
+  <label class="wide">Содержание<textarea name="content" placeholder="Кратко зафиксируй результат, решение или артефакт"></textarea></label>
+  <button type="submit">Сохранить</button>
+</form>
+"""
+
+
+def project_artifact_modal(modal_id: str, project_id: int, artifact_type: str, title: str) -> str:
+    return f"""
+<div id="{h(modal_id)}" class="modal">
+  <button class="modal-backdrop" type="button" data-close-modal aria-label="Закрыть"></button>
+  <div class="modal-card">
+    <div class="modal-head">
+      <div><p class="eyebrow">Project Cockpit</p><h2>{h(title)}</h2></div>
+      <button class="close" type="button" data-close-modal aria-label="Закрыть">x</button>
+    </div>
+    {project_artifact_form(project_id, artifact_type, title)}
+  </div>
+</div>
 """
 
 
@@ -1847,6 +2038,23 @@ h3 { font-size: 18px; margin: 0; letter-spacing: 0; }
 .save-status[data-state="error"] { color: #b42318; }
 .save-status[data-state="ok"] { color: var(--ok); }
 .button-link { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; padding: 0 14px; background: var(--accent); color: #fff; text-decoration: none; border-radius: 6px; font-weight: 800; white-space: nowrap; }
+.button-link.secondary { background: #111827; }
+.button-link.ghost { background: #fff; color: var(--accent); border: 1px solid #cbd5e1; }
+.project-cockpit { min-height: 190px; background: linear-gradient(120deg, rgba(17,24,39,.92), rgba(52,87,213,.76)), url('https://images.unsplash.com/photo-1581092921461-eab62e97a780?q=80&w=1600&auto=format&fit=crop'); background-size: cover; background-position: center; color: #fff; padding: 28px; display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin-bottom: 18px; border-radius: 8px; }
+.project-cockpit .lead { color: #e2e8f0; max-width: 760px; }
+.cockpit-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 18px; }
+.tabs a { background: #fff; border: 1px solid var(--line); color: #344054; text-decoration: none; padding: 10px 13px; border-radius: 6px; font-weight: 800; }
+.tabs a:hover { border-color: #94a3ff; color: var(--accent); }
+.section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
+.section-head h2 { margin-bottom: 4px; }
+.project-brief { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 14px; }
+.project-brief div { background: #f8fafc; border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+.project-brief span { display: block; color: var(--muted); font-size: 13px; font-weight: 800; margin-bottom: 6px; }
+.project-brief p { margin: 0; color: #475467; line-height: 1.45; }
+.artifact-card { border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 10px; background: #fff; }
+.artifact-card span { display: block; color: var(--muted); font-size: 13px; font-weight: 700; margin-top: 4px; }
+.artifact-card p { margin: 10px 0 0; color: #475467; line-height: 1.45; white-space: pre-wrap; }
 .hero { min-height: 230px; background: linear-gradient(120deg, rgba(26,38,65,.88), rgba(45,72,144,.72)), url('https://images.unsplash.com/photo-1517048676732-d65bc937f952?q=80&w=1600&auto=format&fit=crop'); background-size: cover; background-position: center; color: #fff; padding: 32px; display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 18px; }
 .hero h1 { max-width: 760px; }
 .hero p { max-width: 700px; color: #e2e8f0; }
@@ -1938,7 +2146,7 @@ th { background: #eef2f7; font-size: 13px; color: #344054; }
 .login-card h1 { font-size: 28px; }
 .error { background: #fff1f1; color: #9f1c1c; border: 1px solid #ffd0d0; padding: 10px 12px; border-radius: 6px; margin: 0; }
 @media (max-width: 1100px) { .agent-grid, .position-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 900px) { body { display:block; } aside { position: static; width: 100%; } main { margin: 0; width: 100%; padding: 18px; } .metrics, .grid.two, .fields, .checks, .agent-grid, .position-grid, .compact-form { grid-template-columns: 1fr; } .hero, .page-head { display: block; } .button-link { margin-top: 12px; } }
+@media (max-width: 900px) { body { display:block; } aside { position: static; width: 100%; } main { margin: 0; width: 100%; padding: 18px; } .metrics, .grid.two, .fields, .checks, .agent-grid, .position-grid, .compact-form, .project-brief, .inline-form { grid-template-columns: 1fr; } .hero, .page-head, .project-cockpit, .section-head { display: block; } .button-link { margin-top: 12px; } .cockpit-actions { justify-content: flex-start; } }
 """
 
 
