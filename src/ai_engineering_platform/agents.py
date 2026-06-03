@@ -13,6 +13,7 @@ class AgentProfile:
     keywords: list[str]
     expected_artifacts: list[str]
     department: str = "Инженерная команда"
+    order: int = 0
 
 
 def load_agents(config_path: Path) -> list[AgentProfile]:
@@ -25,6 +26,7 @@ def load_agents(config_path: Path) -> list[AgentProfile]:
             keywords=item.get("keywords", []),
             expected_artifacts=item.get("expected_artifacts", []),
             department=item.get("department", "Инженерная команда"),
+            order=int(item.get("order", index)),
         )
-        for item in data["agents"]
+        for index, item in enumerate(data["agents"])
     ]

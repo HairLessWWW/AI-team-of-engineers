@@ -13,6 +13,7 @@ from ai_engineering_platform.web_control import (
     list_rules,
     list_web_users,
     save_agent,
+    save_agent_layout,
     save_project,
     save_rule,
     save_web_user,
@@ -83,6 +84,37 @@ class WebControlTest(unittest.TestCase):
         self.assertIn("Инженерия продукта", html)
         self.assertIn("agent-card", html)
         self.assertIn("modal-card", html)
+        self.assertIn('draggable="true"', html)
+        self.assertIn("/agents/layout", html)
+
+    def test_save_agent_layout_updates_department_and_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            agents_path = Path(tmp) / "agents.json"
+            agents_path.write_text(
+                json.dumps(
+                    {
+                        "agents": [
+                            {"id": "a", "name": "A", "focus": "", "department": "Old", "keywords": [], "expected_artifacts": []},
+                            {"id": "b", "name": "B", "focus": "", "department": "Old", "keywords": [], "expected_artifacts": []},
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            save_agent_layout(
+                agents_path,
+                [
+                    {"id": "b", "department": "New", "order": 0},
+                    {"id": "a", "department": "New", "order": 1},
+                ],
+            )
+            data = json.loads(agents_path.read_text(encoding="utf-8"))
+
+        self.assertEqual([agent["id"] for agent in data["agents"]], ["b", "a"])
+        self.assertEqual(data["agents"][0]["department"], "New")
+        self.assertEqual(data["agents"][1]["order"], 1)
 
     def test_save_project_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

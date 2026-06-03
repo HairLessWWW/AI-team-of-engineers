@@ -277,6 +277,7 @@ def save_agent(agents_path: Path, prompts_path: Path, form: dict[str, list[str]]
         "id": agent_id,
         "name": first(form, "name") or agent_id,
         "department": first(form, "department") or "Инженерная команда",
+        "order": int(first(form, "order") or "0"),
         "focus": first(form, "focus"),
         "keywords": split_csv(first(form, "keywords")),
         "expected_artifacts": split_csv(first(form, "expected_artifacts")),
@@ -291,6 +292,27 @@ def save_agent(agents_path: Path, prompts_path: Path, form: dict[str, list[str]]
     prompts_path.mkdir(parents=True, exist_ok=True)
     (prompts_path / f"{agent_id}.md").write_text(first(form, "prompt"), encoding="utf-8")
     return agent_id
+
+
+def save_agent_layout(agents_path: Path, payload: list[dict[str, Any]]) -> None:
+    data = json.loads(agents_path.read_text(encoding="utf-8"))
+    layout: dict[str, tuple[str, int]] = {}
+    for item in payload:
+        agent_id = str(item.get("id", "")).strip()
+        department = str(item.get("department", "")).strip() or "Инженерная команда"
+        order = int(item.get("order", 0))
+        if agent_id:
+            layout[agent_id] = (department, order)
+    for index, agent in enumerate(data.get("agents", [])):
+        agent_id = str(agent.get("id", ""))
+        if agent_id in layout:
+            department, order = layout[agent_id]
+            agent["department"] = department
+            agent["order"] = order
+        else:
+            agent["order"] = int(agent.get("order", index))
+    data["agents"] = sorted(data.get("agents", []), key=lambda item: (str(item.get("department", "")), int(item.get("order", 0))))
+    agents_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def split_csv(value: str) -> list[str]:
@@ -454,6 +476,19 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = parse.urlparse(self.path).path
+        if path == "/agents/layout":
+            user = self.current_user()
+            if user is None:
+                self.respond_json({"ok": False, "error": "unauthorized"}, HTTPStatus.UNAUTHORIZED)
+                return
+            try:
+                self.require_role(user, {"owner", "admin"})
+                payload = json.loads(self.read_raw_body().decode("utf-8"))
+                save_agent_layout(self.config.agents_path, payload.get("agents", []))
+                self.respond_json({"ok": True})
+            except Exception as exc:
+                self.respond_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            return
         form = self.read_form()
         if path == "/login":
             user = authenticate_user(self.config.web_db_path, first(form, "username"), first(form, "password"))
@@ -528,9 +563,11 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
             raise PermissionError("Недостаточно прав для этого действия.")
 
     def read_form(self) -> dict[str, list[str]]:
+        return parse.parse_qs(self.read_raw_body().decode("utf-8"))
+
+    def read_raw_body(self) -> bytes:
         length = int(self.headers.get("Content-Length", "0"))
-        raw = self.rfile.read(length).decode("utf-8")
-        return parse.parse_qs(raw)
+        return self.rfile.read(length)
 
     def redirect(self, location: str) -> None:
         self.send_response(HTTPStatus.SEE_OTHER)
@@ -540,6 +577,14 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
     def respond(self, body: bytes, status: HTTPStatus = HTTPStatus.OK) -> None:
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def respond_json(self, payload: dict[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -569,7 +614,7 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
 """
 
     def render_agents(self) -> str:
-        agents = load_agents(self.config.agents_path)
+        agents = sorted(load_agents(self.config.agents_path), key=lambda item: (item.department, item.order, item.name))
         departments: dict[str, list[Any]] = {}
         for agent in agents:
             departments.setdefault(agent.department, []).append(agent)
@@ -579,12 +624,16 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
 <div class="page-head">
   <div>
     <h1>Агенты</h1>
-    <p class="lead">Штат AI-команды по отделам. Открой карточку, чтобы редактировать роль, правила и prompt.</p>
+    <p class="lead">Штат AI-команды по отделам. Перетаскивай карточки мышкой, чтобы менять отдел и порядок.</p>
   </div>
-  <a class="button-link" href="#agent-new">Новый агент</a>
+  <div class="head-actions">
+    <span id="layout-status" class="save-status">порядок сохранен</span>
+    <a class="button-link" href="#agent-new">Новый агент</a>
+  </div>
 </div>
 {sections}
 {new_agent}
+{AGENTS_DRAG_SCRIPT}
 """
 
     def render_org(self) -> str:
@@ -691,7 +740,7 @@ def agent_department_section(department: str, agents: list[Any], prompts_path: P
     <h2>{h(department)}</h2>
     <span>{len(agents)} специалистов</span>
   </div>
-  <div class="agent-grid">{cards}</div>
+  <div class="agent-grid drop-zone" data-department="{h(department)}">{cards}</div>
 </section>
 """
 
@@ -701,9 +750,9 @@ def agent_card(agent: Any, prompt: str) -> str:
     artifacts = ", ".join(agent.expected_artifacts[:3]) or "артефакты не заданы"
     modal_id = f"agent-{h(agent.id)}"
     return f"""
-<article class="agent-card">
+<article class="agent-card" draggable="true" data-agent-id="{h(agent.id)}">
   <div class="agent-top">
-    <span class="agent-id">{h(agent.id)}</span>
+    <span class="agent-id"><span class="drag-handle">::</span> {h(agent.id)}</span>
     <a class="icon-button" href="#{modal_id}" aria-label="Открыть настройки">Настройки</a>
   </div>
   <h3>{h(agent.name)}</h3>
@@ -744,6 +793,7 @@ def agent_modal(
       <label>ID<input name="id" value="{h(agent_id)}" {readonly}></label>
       <label>Имя роли<input name="name" value="{h(name)}"></label>
       <label>Отдел<input name="department" value="{h(department)}"></label>
+      <input type="hidden" name="order" value="0">
       <label>Ожидаемые артефакты<input name="expected_artifacts" value="{h(', '.join(artifacts))}"></label>
       <label class="wide">Фокус<textarea name="focus">{h(focus)}</textarea></label>
       <label class="wide">Ключевые слова<input name="keywords" value="{h(', '.join(keywords))}"></label>
@@ -819,6 +869,94 @@ def web_user_form() -> str:
 """
 
 
+AGENTS_DRAG_SCRIPT = """
+<script>
+(() => {
+  const status = document.getElementById('layout-status');
+  const zones = Array.from(document.querySelectorAll('.drop-zone'));
+  let dragged = null;
+
+  function setStatus(text, state = '') {
+    if (!status) return;
+    status.textContent = text;
+    status.dataset.state = state;
+  }
+
+  function cardsIn(zone) {
+    return Array.from(zone.querySelectorAll('.agent-card'));
+  }
+
+  function placeholderBefore(zone, y) {
+    return cardsIn(zone).find(card => {
+      const box = card.getBoundingClientRect();
+      return y < box.top + box.height / 2;
+    });
+  }
+
+  async function saveLayout() {
+    const agents = [];
+    zones.forEach(zone => {
+      cardsIn(zone).forEach((card, index) => {
+        agents.push({
+          id: card.dataset.agentId,
+          department: zone.dataset.department,
+          order: index,
+        });
+      });
+    });
+    setStatus('сохраняю...', 'saving');
+    try {
+      const response = await fetch('/agents/layout', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({agents}),
+      });
+      if (!response.ok) throw new Error(await response.text());
+      setStatus('порядок сохранен', 'ok');
+    } catch (error) {
+      setStatus('не удалось сохранить', 'error');
+      console.error(error);
+    }
+  }
+
+  document.querySelectorAll('.agent-card').forEach(card => {
+    card.addEventListener('dragstart', event => {
+      dragged = card;
+      card.classList.add('dragging');
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', card.dataset.agentId);
+    });
+    card.addEventListener('dragend', () => {
+      card.classList.remove('dragging');
+      zones.forEach(zone => zone.classList.remove('drag-over'));
+      dragged = null;
+    });
+  });
+
+  zones.forEach(zone => {
+    zone.addEventListener('dragover', event => {
+      event.preventDefault();
+      zone.classList.add('drag-over');
+      if (!dragged) return;
+      const before = placeholderBefore(zone, event.clientY);
+      if (before && before !== dragged) {
+        zone.insertBefore(dragged, before);
+      } else if (!before) {
+        zone.appendChild(dragged);
+      }
+    });
+    zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+    zone.addEventListener('drop', event => {
+      event.preventDefault();
+      zone.classList.remove('drag-over');
+      saveLayout();
+    });
+  });
+})();
+</script>
+"""
+
+
 CSS = """
 :root { color-scheme: light; --ink: #1b2430; --muted: #647084; --line: #d9dee7; --bg: #f5f7fa; --panel: #ffffff; --accent: #3457d5; --ok: #1f8a5b; }
 * { box-sizing: border-box; }
@@ -835,6 +973,11 @@ h2 { font-size: 19px; margin: 0 0 16px; letter-spacing: 0; }
 h3 { font-size: 18px; margin: 0; letter-spacing: 0; }
 .lead, .muted { color: var(--muted); }
 .page-head { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 18px; }
+.head-actions { display: flex; align-items: center; gap: 12px; }
+.save-status { color: var(--muted); font-size: 13px; font-weight: 800; white-space: nowrap; }
+.save-status[data-state="saving"] { color: #9a6a00; }
+.save-status[data-state="error"] { color: #b42318; }
+.save-status[data-state="ok"] { color: var(--ok); }
 .button-link { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; padding: 0 14px; background: var(--accent); color: #fff; text-decoration: none; border-radius: 6px; font-weight: 800; white-space: nowrap; }
 .hero { min-height: 230px; background: linear-gradient(120deg, rgba(26,38,65,.88), rgba(45,72,144,.72)), url('https://images.unsplash.com/photo-1517048676732-d65bc937f952?q=80&w=1600&auto=format&fit=crop'); background-size: cover; background-position: center; color: #fff; padding: 32px; display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 18px; }
 .hero h1 { max-width: 760px; }
@@ -851,11 +994,15 @@ h3 { font-size: 18px; margin: 0; letter-spacing: 0; }
 .department-head { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; margin-bottom: 12px; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
 .department-head h2 { margin: 0; }
 .department-head span { color: var(--muted); font-weight: 700; }
-.agent-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.agent-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; min-height: 128px; border: 1px dashed transparent; border-radius: 8px; padding: 2px; }
+.agent-grid.drag-over { border-color: #94a3ff; background: #f1f5ff; }
 .agent-card { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 16px; min-height: 245px; display: grid; grid-template-rows: auto auto 1fr auto; gap: 12px; box-shadow: 0 1px 2px rgba(16,24,40,.04); }
+.agent-card[draggable="true"] { cursor: grab; }
+.agent-card.dragging { opacity: .58; cursor: grabbing; outline: 2px solid #94a3ff; }
 .agent-card p { margin: 0; color: #475467; line-height: 1.45; }
 .agent-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .agent-id { color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; }
+.drag-handle { color: #98a2b3; font-weight: 900; margin-right: 4px; }
 .icon-button { color: var(--accent); text-decoration: none; font-size: 13px; font-weight: 800; }
 .agent-card dl { display: grid; grid-template-columns: 86px 1fr; gap: 7px 10px; margin: 0; font-size: 13px; }
 .agent-card dt { color: var(--muted); font-weight: 800; }
