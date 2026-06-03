@@ -611,6 +611,7 @@ def render_page(config: WebConfig, active: str, body: str) -> bytes:
     <nav>{links}</nav>
   </aside>
   <main>{body}</main>
+  {MODAL_SCRIPT}
 </body>
 </html>"""
     return html.encode("utf-8")
@@ -1068,14 +1069,14 @@ def org_structure_modal(structure: dict[str, Any], structures: list[dict[str, An
     modal_id = f"structure-edit-{h(structure['id'])}"
     return f"""
 <div class="modal" id="{modal_id}">
-  <a class="modal-backdrop" href="#"></a>
+  <button class="modal-backdrop" type="button" data-close-modal aria-label="Закрыть"></button>
   <div class="modal-card">
     <div class="modal-head">
       <div>
         <p class="eyebrow">Редактирование структуры</p>
         <h2>{h(structure['name'])}</h2>
       </div>
-      <a class="close" href="#" aria-label="Закрыть">x</a>
+      <button class="close" type="button" data-close-modal aria-label="Закрыть">x</button>
     </div>
     {org_structure_form(structure, structures)}
   </div>
@@ -1106,14 +1107,14 @@ def org_position_modal(position: dict[str, Any], structure_id: int, agents: list
     modal_id = f"position-edit-{h(position['id'])}"
     return f"""
 <div class="modal" id="{modal_id}">
-  <a class="modal-backdrop" href="#"></a>
+  <button class="modal-backdrop" type="button" data-close-modal aria-label="Закрыть"></button>
   <div class="modal-card">
     <div class="modal-head">
       <div>
         <p class="eyebrow">Редактирование позиции</p>
         <h2>{h(position['title'])}</h2>
       </div>
-      <a class="close" href="#" aria-label="Закрыть">x</a>
+      <button class="close" type="button" data-close-modal aria-label="Закрыть">x</button>
     </div>
     {org_position_form(position, structure_id, agents)}
   </div>
@@ -1169,14 +1170,14 @@ def agent_modal(
     modal_id = f"agent-{h(agent_id)}" if agent_id else "agent-new"
     return f"""
 <div class="modal" id="{modal_id}">
-  <a class="modal-backdrop" href="#"></a>
+  <button class="modal-backdrop" type="button" data-close-modal aria-label="Закрыть"></button>
   <form class="modal-card" method="post" action="/agents/save">
     <div class="modal-head">
       <div>
         <p class="eyebrow">Карточка специалиста</p>
         <h2>{h(title)}</h2>
       </div>
-      <a class="close" href="#" aria-label="Закрыть">x</a>
+      <button class="close" type="button" data-close-modal aria-label="Закрыть">x</button>
     </div>
     <div class="fields">
       <label>ID<input name="id" value="{h(agent_id)}" {readonly}></label>
@@ -1347,6 +1348,33 @@ AGENTS_DRAG_SCRIPT = """
 """
 
 
+MODAL_SCRIPT = """
+<script>
+(() => {
+  function closeModalWithoutScroll() {
+    const y = window.scrollY;
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+    window.scrollTo({top: y, left: 0, behavior: 'instant'});
+  }
+
+  document.addEventListener('click', event => {
+    const closer = event.target.closest('[data-close-modal]');
+    if (!closer) return;
+    event.preventDefault();
+    closeModalWithoutScroll();
+  });
+
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && window.location.hash) {
+      event.preventDefault();
+      closeModalWithoutScroll();
+    }
+  });
+})();
+</script>
+"""
+
+
 CSS = """
 :root { color-scheme: light; --ink: #1b2430; --muted: #647084; --line: #d9dee7; --bg: #f5f7fa; --panel: #ffffff; --accent: #3457d5; --ok: #1f8a5b; }
 * { box-sizing: border-box; }
@@ -1400,11 +1428,11 @@ h3 { font-size: 18px; margin: 0; letter-spacing: 0; }
 .agent-card dd { margin: 0; color: #344054; }
 .modal { display: none; position: fixed; inset: 0; z-index: 20; }
 .modal:target { display: block; }
-.modal-backdrop { position: absolute; inset: 0; background: rgba(15,23,42,.58); }
+.modal-backdrop { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; padding: 0; margin: 0; background: rgba(15,23,42,.58); cursor: default; }
 .modal-card { position: relative; width: min(920px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; margin: 24px auto; background: #fff; border-radius: 8px; padding: 22px; box-shadow: 0 24px 90px rgba(0,0,0,.32); }
 .modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 16px; }
 .modal-head h2 { margin: 0; }
-.close { color: var(--muted); text-decoration: none; font-weight: 900; font-size: 20px; line-height: 1; }
+.close { margin: 0; padding: 0; border: 0; background: transparent; color: var(--muted); text-decoration: none; font-weight: 900; font-size: 20px; line-height: 1; cursor: pointer; }
 .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 label { display: grid; gap: 6px; font-weight: 700; color: #344054; }
 input, textarea, select { width: 100%; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px 11px; font: inherit; color: var(--ink); background: #fff; }

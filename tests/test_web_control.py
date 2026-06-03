@@ -113,6 +113,7 @@ class WebControlTest(unittest.TestCase):
         self.assertIn("structure-edit-", html)
         self.assertIn("position-edit-", html)
         self.assertNotIn("inline-editor", html)
+        self.assertIn("data-close-modal", html)
 
     def test_delete_org_position(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
