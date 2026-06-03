@@ -171,6 +171,17 @@ def ensure_project_material_columns(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE project_materials ADD COLUMN project_id INTEGER")
 
 
+def ensure_materials_db_project_columns(db_path: Path | None) -> None:
+    connection = connect_existing(db_path)
+    if connection is None:
+        return
+    with connection:
+        ensure_project_material_columns(connection)
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_project_materials_project ON project_materials(project_id, id)"
+        )
+
+
 CTO_POSITIONS = [
     "Electrical Lead Engineer",
     "Mechanical Design Lead",
@@ -773,24 +784,51 @@ def recent_history(db_path: Path | None, limit: int = 50) -> list[dict[str, Any]
     return [{"telegram_id": row[0], "agent_id": row[1], "role": row[2], "content": row[3], "created_at": row[4]} for row in rows]
 
 
-def recent_materials(db_path: Path | None, limit: int = 50) -> list[dict[str, Any]]:
+def recent_materials(db_path: Path | None, limit: int = 50, project_id: int | None = None) -> list[dict[str, Any]]:
     connection = connect_existing(db_path)
     if connection is None:
         return []
     with connection:
+        ensure_project_material_columns(connection)
+        where = ""
+        params: tuple[Any, ...] = (limit,)
+        if project_id is not None:
+            where = "WHERE project_id = ?"
+            params = (project_id, limit)
         rows = connection.execute(
-            """
-            SELECT id, telegram_id, source_type, title, source_url, created_at
+            f"""
+            SELECT id, telegram_id, project_id, source_type, title, source_url, created_at
             FROM project_materials
+            {where}
             ORDER BY id DESC
             LIMIT ?
             """,
-            (limit,),
+            params,
         ).fetchall()
     return [
-        {"id": row[0], "telegram_id": row[1], "source_type": row[2], "title": row[3], "source_url": row[4], "created_at": row[5]}
+        {
+            "id": row[0],
+            "telegram_id": row[1],
+            "project_id": row[2],
+            "source_type": row[3],
+            "title": row[4],
+            "source_url": row[5],
+            "created_at": row[6],
+        }
         for row in rows
     ]
+
+
+def assign_material_to_project(db_path: Path | None, material_id: int, project_id: int | None) -> None:
+    connection = connect_existing(db_path)
+    if connection is None:
+        raise ValueError("База материалов не настроена.")
+    with connection:
+        ensure_project_material_columns(connection)
+        connection.execute(
+            "UPDATE project_materials SET project_id = ? WHERE id = ?",
+            (project_id, material_id),
+        )
 
 
 def render_page(config: WebConfig, active: str, body: str) -> bytes:
@@ -947,6 +985,17 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
                 self.require_role(user, {"owner", "admin", "member"})
                 save_project_task(self.config.web_db_path, form)
                 self.redirect(f"/project?id={first(form, 'project_id')}")
+                return
+            if path == "/materials/assign":
+                self.require_role(user, {"owner", "admin", "member"})
+                project_raw = first(form, "project_id")
+                assign_material_to_project(
+                    self.config.materials_db_path,
+                    int(first(form, "material_id")),
+                    int(project_raw) if project_raw else None,
+                )
+                redirect_to = first(form, "redirect_to") or "/knowledge"
+                self.redirect(redirect_to)
                 return
             if path == "/backlog/save":
                 self.require_role(user, {"owner", "admin", "member"})
@@ -1123,7 +1172,12 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
             return "<h1>Проект не найден</h1>"
         agents = load_agents(self.config.agents_path)
         tasks = list_project_tasks(self.config.web_db_path, project["id"])
-        materials = recent_materials(self.config.materials_db_path, 100)
+        materials = recent_materials(self.config.materials_db_path, 100, project["id"])
+        available_materials = [
+            material
+            for material in recent_materials(self.config.materials_db_path, 100)
+            if material["project_id"] in (None, project["id"])
+        ]
         return f"""
 <div class="page-head">
   <div>
@@ -1144,8 +1198,9 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
 </section>
 <section class="card">
   <h2>Материалы</h2>
-  <p class="lead">Сейчас показаны последние материалы базы знаний. Следующий шаг - строгая привязка материалов к проекту при загрузке.</p>
+  <p class="lead">Материалы, закрепленные за этим проектом. Их удобно использовать как контекст для задач AI-агентам.</p>
   {materials_table(materials[:20])}
+  {material_assign_form(available_materials, project['id'], f"/project?id={project['id']}")}
 </section>
 """
 
@@ -1166,8 +1221,10 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
 
     def render_knowledge(self) -> str:
         materials = recent_materials(self.config.materials_db_path, 100)
+        projects = list_projects(self.config.web_db_path)
+        project_names = {project["id"]: project["name"] for project in projects}
         rows = "".join(
-            f"<tr><td>#{m['id']}</td><td>{h(m['title'])}</td><td>{h(m['source_type'])}</td><td>{h(m['telegram_id'])}</td><td>{fmt_time(m['created_at'])}</td></tr>"
+            f"<tr><td>#{m['id']}</td><td>{h(m['title'])}<br><span class='muted'>Проект: {h(project_names.get(m['project_id'], 'Не привязан'))}</span></td><td>{h(m['source_type'])}</td><td>{h(m['telegram_id'])}</td><td>{fmt_time(m['created_at'])}</td></tr>"
             for m in materials
         )
         return f"""
@@ -1274,6 +1331,23 @@ def materials_table(materials: list[dict[str, Any]]) -> str:
         for m in materials
     )
     return f"<table><thead><tr><th>ID</th><th>Материал</th><th>Тип</th><th>Дата</th></tr></thead><tbody>{rows}</tbody></table>"
+
+
+def material_assign_form(materials: list[dict[str, Any]], project_id: int, redirect_to: str) -> str:
+    if not materials:
+        return "<p class='muted'>Нет свободных материалов для привязки к проекту.</p>"
+    options = "".join(
+        f"<option value='{h(material['id'])}'>#{h(material['id'])} {h(material['title'])} ({h(material['source_type'])})</option>"
+        for material in materials
+    )
+    return f"""
+<form class="inline-form" method="post" action="/materials/assign">
+  <input type="hidden" name="project_id" value="{h(project_id)}">
+  <input type="hidden" name="redirect_to" value="{h(redirect_to)}">
+  <label>Добавить материал из базы знаний<select name="material_id">{options}</select></label>
+  <button type="submit">Закрепить за проектом</button>
+</form>
+"""
 
 
 def backlog_list(items: list[dict[str, Any]]) -> str:
@@ -1855,6 +1929,8 @@ th { background: #eef2f7; font-size: 13px; color: #344054; }
 .compact-form { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 14px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .modal-card .compact-form { border: 0; padding: 0; }
 .compact-form button { width: fit-content; }
+.inline-form { margin-top: 14px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: end; }
+.inline-form button { margin: 0; white-space: nowrap; }
 .position-form { margin-top: 12px; }
 .login-page { display: grid; place-items: center; background: #111827; }
 .login-main { margin: 0; width: min(460px, calc(100vw - 32px)); padding: 0; }
@@ -1868,6 +1944,7 @@ th { background: #eef2f7; font-size: 13px; color: #344054; }
 
 def run_web(config: WebConfig) -> None:
     init_web_db(config.web_db_path)
+    ensure_materials_db_project_columns(config.materials_db_path)
     seed_admin_user(config.web_db_path, config.password)
     ControlCenterHandler.config = config
     server = ThreadingHTTPServer((config.host, config.port), ControlCenterHandler)

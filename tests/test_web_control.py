@@ -31,6 +31,7 @@ from ai_engineering_platform.web_control import (
     CSS,
     render_page,
 )
+from ai_engineering_platform.project_materials import ProjectMaterials
 
 
 class WebControlTest(unittest.TestCase):
@@ -272,6 +273,32 @@ class WebControlTest(unittest.TestCase):
         self.assertIn("Робот V1", html)
         self.assertIn("Задачи агентам", html)
         self.assertIn("/project/task/save", html)
+
+    def test_render_project_workspace_can_assign_material(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agents_path = root / "agents.json"
+            agents_path.write_text('{"agents": []}', encoding="utf-8")
+            db_path = root / "web.db"
+            materials_db = root / "materials.db"
+            init_web_db(db_path)
+            save_project(db_path, {"name": ["Robot V1"], "status": ["active"], "goal": ["Pilot"], "notes": [""]})
+            ProjectMaterials(materials_db, root / "files").add_material(123, "file", "bom.xlsx", "Motor 4")
+            project = list_projects(db_path)[0]
+            config = WebConfig(
+                password="secret",
+                agents_path=agents_path,
+                prompts_path=root / "prompts",
+                web_db_path=db_path,
+                materials_db_path=materials_db,
+            )
+            handler = object.__new__(ControlCenterHandler)
+            handler.config = config
+
+            html = handler.render_project({"id": [str(project["id"])]})
+
+        self.assertIn("/materials/assign", html)
+        self.assertIn("bom.xlsx", html)
 
     def test_seed_cto_structure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

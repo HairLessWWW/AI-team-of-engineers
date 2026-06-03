@@ -100,5 +100,17 @@ class ProjectMaterialsTest(unittest.TestCase):
         self.assertEqual(recent[0].title, "tz.docx")
 
 
+    def test_assign_material_to_project(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ProjectMaterials(Path(tmp) / "materials.db", Path(tmp) / "files")
+            material_id = store.add_material(123, "file", "bom.xlsx", "Motor 4")
+            store.assign_to_project(material_id, 77)
+            project_materials = store.get_project_materials(77, 5)
+
+        self.assertEqual(len(project_materials), 1)
+        self.assertEqual(project_materials[0].project_id, 77)
+        self.assertEqual(project_materials[0].title, "bom.xlsx")
+
+
 if __name__ == "__main__":
     unittest.main()

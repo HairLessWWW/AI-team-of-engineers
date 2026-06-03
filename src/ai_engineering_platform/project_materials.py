@@ -19,6 +19,7 @@ MAX_EXTRACTED_CHARS = 24_000
 class ProjectMaterial:
     id: int
     telegram_id: int
+    project_id: int | None
     source_type: str
     title: str
     content: str
@@ -50,12 +51,19 @@ class ProjectMaterials:
                     content TEXT NOT NULL,
                     source_url TEXT,
                     file_path TEXT,
+                    project_id INTEGER,
                     created_at INTEGER NOT NULL
                 )
                 """
             )
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(project_materials)").fetchall()}
+            if "project_id" not in columns:
+                connection.execute("ALTER TABLE project_materials ADD COLUMN project_id INTEGER")
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_project_materials_user ON project_materials(telegram_id, id)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_project_materials_project ON project_materials(project_id, id)"
             )
 
     def add_material(
@@ -67,13 +75,14 @@ class ProjectMaterials:
         *,
         source_url: str | None = None,
         file_path: Path | None = None,
+        project_id: int | None = None,
     ) -> int:
         now = int(time.time())
         with self._connect() as connection:
             cursor = connection.execute(
                 """
-                INSERT INTO project_materials (telegram_id, source_type, title, content, source_url, file_path, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO project_materials (telegram_id, source_type, title, content, source_url, file_path, project_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     telegram_id,
@@ -82,6 +91,7 @@ class ProjectMaterials:
                     trim_text(content, MAX_EXTRACTED_CHARS),
                     source_url,
                     str(file_path) if file_path else None,
+                    project_id,
                     now,
                 ),
             )
@@ -93,7 +103,7 @@ class ProjectMaterials:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT id, telegram_id, source_type, title, content, source_url, file_path, created_at
+                SELECT id, telegram_id, project_id, source_type, title, content, source_url, file_path, created_at
                 FROM project_materials
                 WHERE telegram_id = ?
                 ORDER BY id DESC
@@ -105,19 +115,61 @@ class ProjectMaterials:
             ProjectMaterial(
                 id=int(row[0]),
                 telegram_id=int(row[1]),
-                source_type=str(row[2]),
-                title=str(row[3]),
-                content=str(row[4]),
-                source_url=str(row[5]) if row[5] else None,
-                file_path=str(row[6]) if row[6] else None,
-                created_at=int(row[7]),
+                project_id=int(row[2]) if row[2] is not None else None,
+                source_type=str(row[3]),
+                title=str(row[4]),
+                content=str(row[5]),
+                source_url=str(row[6]) if row[6] else None,
+                file_path=str(row[7]) if row[7] else None,
+                created_at=int(row[8]),
             )
             for row in rows
         ]
 
-    def count_materials(self, telegram_id: int | None = None) -> int:
+    def get_project_materials(self, project_id: int, limit: int) -> list[ProjectMaterial]:
+        if limit <= 0:
+            return []
         with self._connect() as connection:
-            if telegram_id is None:
+            rows = connection.execute(
+                """
+                SELECT id, telegram_id, project_id, source_type, title, content, source_url, file_path, created_at
+                FROM project_materials
+                WHERE project_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (project_id, limit),
+            ).fetchall()
+        return [
+            ProjectMaterial(
+                id=int(row[0]),
+                telegram_id=int(row[1]),
+                project_id=int(row[2]) if row[2] is not None else None,
+                source_type=str(row[3]),
+                title=str(row[4]),
+                content=str(row[5]),
+                source_url=str(row[6]) if row[6] else None,
+                file_path=str(row[7]) if row[7] else None,
+                created_at=int(row[8]),
+            )
+            for row in rows
+        ]
+
+    def assign_to_project(self, material_id: int, project_id: int | None) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE project_materials SET project_id = ? WHERE id = ?",
+                (project_id, material_id),
+            )
+
+    def count_materials(self, telegram_id: int | None = None, project_id: int | None = None) -> int:
+        with self._connect() as connection:
+            if project_id is not None:
+                row = connection.execute(
+                    "SELECT COUNT(*) FROM project_materials WHERE project_id = ?",
+                    (project_id,),
+                ).fetchone()
+            elif telegram_id is None:
                 row = connection.execute("SELECT COUNT(*) FROM project_materials").fetchone()
             else:
                 row = connection.execute(
