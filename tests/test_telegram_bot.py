@@ -25,6 +25,15 @@ class RateLimitedLLMClient:
         raise HTTPError(url="https://api.example.test", code=429, msg="Too Many Requests", hdrs=None, fp=None)
 
 
+class RecordingLLMClient:
+    def __init__(self) -> None:
+        self.messages: list[dict[str, str]] = []
+
+    def complete(self, messages: list[dict[str, str]]) -> str:
+        self.messages = messages
+        return "Recorded response"
+
+
 class TelegramBotTest(unittest.TestCase):
     def setUp(self) -> None:
         self.agents = [
@@ -108,6 +117,20 @@ class TelegramBotTest(unittest.TestCase):
         )
         self.assertIn("Bot test", response.text)
         self.assertIn("Что блокирует пилотную сборку", response.text)
+
+    def test_agent_prompt_contains_role_boundary(self) -> None:
+        client = RecordingLLMClient()
+        response = handle_text(
+            "/ask electrical Как выбрать материал корпуса?",
+            self.agents,
+            client,
+            prompts_path=None,
+        )
+
+        self.assertIn("Recorded response", response.text)
+        self.assertIn("Граница твоей роли", client.messages[0]["content"])
+        self.assertIn("Фильтр выхода за роль", client.messages[0]["content"])
+        self.assertIn("вне роли электрика", client.messages[0]["content"])
 
     def test_handle_ask_429_fallback(self) -> None:
         response = handle_text(

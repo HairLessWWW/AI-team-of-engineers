@@ -49,6 +49,8 @@ class AgentCard:
     label: str
     role: str
     description: str
+    scope: str
+    out_of_scope_redirect: str
     aliases: tuple[str, ...] = ()
 
 
@@ -58,6 +60,8 @@ AGENT_CARDS = {
         label="Системный архитектор",
         role="Systems Engineering / Chief Architect",
         description="Смотрит на робота как на систему: требования, интерфейсы, архитектура, риски между направлениями.",
+        scope="системная архитектура, требования, интерфейсы, междисциплинарные риски, готовность к design review",
+        out_of_scope_redirect="если вопрос слишком детальный по электрике, производству или документации, предложи подключить профильного специалиста",
         aliases=("system", "architect", "архитектор", "системщик", "системный"),
     ),
     "electrical": AgentCard(
@@ -65,6 +69,8 @@ AGENT_CARDS = {
         label="Ведущий электрик",
         role="Electrical Lead Engineer",
         description="Питание, защиты, шкафы, кабели, разъемы, электрический BOM, FAT/SAT по электрике.",
+        scope="электрика, питание, защиты, заземление, кабели, разъемы, шкафы, карты сигналов, электрический BOM",
+        out_of_scope_redirect="если вопрос про механику, производство, firmware, сертификацию или бизнес, скажи что это вне роли электрика и предложи нужного специалиста",
         aliases=("electric", "электрик", "электрика"),
     ),
     "manufacturing": AgentCard(
@@ -72,6 +78,8 @@ AGENT_CARDS = {
         label="Технолог производства",
         role="Manufacturing Engineering",
         description="Пилотная сборка, технологические карты, оснастка, контроль, калибровка, производственные blockers.",
+        scope="сборка, технологические карты, оснастка, контрольные операции, входной контроль, калибровка, pilot production readiness",
+        out_of_scope_redirect="если вопрос про схемы, firmware, системную архитектуру или сертификацию, скажи что это вне роли технолога и предложи нужного специалиста",
         aliases=("production", "производство", "технолог"),
     ),
     "certification_docs": AgentCard(
@@ -79,6 +87,8 @@ AGENT_CARDS = {
         label="Документация и сертификация",
         role="Certification and Technical Documentation",
         description="Паспорта, РЭ, инструкции, ПМИ, протоколы, risk assessment, комплектность документации.",
+        scope="техническая документация, эксплуатационные документы, ПМИ, протоколы, risk assessment, traceability, сертификационная готовность",
+        out_of_scope_redirect="если вопрос про проектирование схем, сборку, firmware или архитектурное решение, скажи что это вне роли документации/сертификации и предложи профильного специалиста",
         aliases=("certification", "docs", "documentation", "сертификация", "документация"),
     ),
 }
@@ -248,6 +258,8 @@ def get_agent_card(agent: AgentProfile) -> AgentCard:
             label=agent.name,
             role=agent.name,
             description=agent.focus,
+            scope=agent.focus,
+            out_of_scope_redirect="если вопрос вне роли, скажи об этом и предложи профильного специалиста",
         ),
     )
 
@@ -280,7 +292,11 @@ def ask_agent(agent: AgentProfile, question: str, llm_client: LLMClient, prompts
         "Ты AI-сотрудник робототехнической компании. Отвечай на русском языке как ведущий специалист. "
         "Пиши структурно и прикладно. Отделяй факты, предположения, риски, открытые вопросы, рекомендации "
         "и решения, которые требуют подтверждения человеком. "
-        "Не утверждай safety-critical и production решения самостоятельно."
+        "Не утверждай safety-critical и production решения самостоятельно.\n\n"
+        f"Граница твоей роли: {card.scope}.\n"
+        f"Фильтр выхода за роль: {card.out_of_scope_redirect}. "
+        "Если вопрос выходит за рамки твоей роли, не отвечай как эксперт соседнего направления. "
+        "Коротко обозначь границу компетенции, дай только смежные замечания в рамках своей роли и предложи, какого специалиста подключить."
     )
     if role_prompt:
         system_prompt = f"{system_prompt}\n\nРолевые инструкции:\n{role_prompt}"
