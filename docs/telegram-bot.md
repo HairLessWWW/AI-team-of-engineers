@@ -43,6 +43,9 @@ Telegram-бот - первый дружелюбный интерфейс к AI T
 /help
 /whoami
 /status
+/memory
+/materials
+/clear_materials
 /agents
 /ask <agent_id> <вопрос>
 /meeting <тема>
@@ -106,6 +109,41 @@ TELEGRAM_MEMORY_DEPTH=10
 
 `/forget` очищает память текущего выбранного специалиста для текущего пользователя.
 
+## Материалы проекта
+
+Бот может принимать материалы, извлекать из них текст и добавлять в контекст специалистов:
+
+- Word `.docx`;
+- PowerPoint `.pptx`;
+- `.txt`, `.md`, `.csv`, `.tsv`;
+- ссылки `http/https`.
+
+Включается отдельной SQLite-базой и папкой для файлов:
+
+```bash
+TELEGRAM_MATERIALS_DB=/var/lib/ai-team-of-engineers/materials.db
+TELEGRAM_MATERIALS_DIR=/var/lib/ai-team-of-engineers/materials
+TELEGRAM_MATERIALS_DEPTH=5
+```
+
+Сценарий:
+
+1. Отправить файл или ссылку в Telegram.
+2. Бот сохранит материал проекта.
+3. Выбрать специалиста.
+4. Задать вопрос по материалам.
+
+Команды:
+
+```text
+/materials
+/clear_materials
+```
+
+`/materials` показывает последние загруженные материалы.
+
+`/clear_materials` очищает материалы текущего пользователя.
+
 ## Режимы LLM
 
 Mock:
@@ -136,6 +174,6 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 
 - Сессии пользователя пока хранятся в памяти процесса и сбрасываются при restart сервиса.
 - Память диалогов хранится в SQLite и переживает restart сервиса.
-- Загрузка файлов и project memory еще не реализованы.
+- Материалы проекта извлекаются как текст; прямое редактирование Word/PPTX будет добавлено отдельным workflow.
 - `viewer` пока технически имеет доступ как обычный пользователь; read-only поведение будет добавлено позже.
 - Human approval workflow еще не реализован.

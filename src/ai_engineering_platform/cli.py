@@ -73,6 +73,9 @@ def main() -> None:
             access_db_path=config.access_db_path,
             memory_db_path=config.memory_db_path,
             memory_depth=config.memory_depth,
+            materials_db_path=config.materials_db_path,
+            materials_files_dir=config.materials_files_dir,
+            materials_depth=config.materials_depth,
         )
         run_bot(config)
     elif args.command == "telegram-check":

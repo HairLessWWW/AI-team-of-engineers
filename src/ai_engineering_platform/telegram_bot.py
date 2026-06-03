@@ -14,6 +14,7 @@ from .agents import AgentProfile, load_agents
 from .conversation_memory import ConversationMemory, MemoryEvent
 from .llm import DeepSeekLLMClient, LLMClient, MockLLMClient, OpenAICompatibleLLMClient
 from .prompts import load_agent_prompt
+from .project_materials import ProjectMaterial, ProjectMaterials, extract_file_text, extract_urls, fetch_url_text
 
 
 HELP_TEXT = """AI Team of Engineers
@@ -33,10 +34,17 @@ HELP_TEXT = """AI Team of Engineers
 /status - статус бота
 /memory - статус памяти
 /forget - очистить память выбранного специалиста
+/materials - список загруженных материалов
+/clear_materials - очистить твои материалы проекта
 /agents - список специалистов
 /ask <agent_id> <вопрос> - задать вопрос специалисту
 /meeting <тема> - совещание всех MVP-агентов
 /meeting <agent_id,agent_id> <тема> - совещание выбранных агентов
+
+Материалы проекта:
+- пришли Word .docx, PowerPoint .pptx, .txt, .md, .csv или .tsv файлом
+- пришли сообщение со ссылкой http/https
+- затем выбери специалиста и задай вопрос по материалам
 
 Администрирование:
 /users
@@ -114,6 +122,9 @@ class TelegramConfig:
     access_db_path: Path | None = None
     memory_db_path: Path | None = None
     memory_depth: int = 10
+    materials_db_path: Path | None = None
+    materials_files_dir: Path | None = None
+    materials_depth: int = 5
     poll_interval_seconds: float = 1.0
 
     @classmethod
@@ -128,6 +139,9 @@ class TelegramConfig:
         access_db_raw = os.getenv("TELEGRAM_ACCESS_DB", "").strip()
         memory_db_raw = os.getenv("TELEGRAM_MEMORY_DB", "").strip()
         memory_depth_raw = os.getenv("TELEGRAM_MEMORY_DEPTH", "10").strip()
+        materials_db_raw = os.getenv("TELEGRAM_MATERIALS_DB", "").strip()
+        materials_files_raw = os.getenv("TELEGRAM_MATERIALS_DIR", "").strip()
+        materials_depth_raw = os.getenv("TELEGRAM_MATERIALS_DEPTH", "5").strip()
         return cls(
             token=token,
             mode=os.getenv("AI_ENGINEERING_BOT_MODE", "mock-llm"),
@@ -136,6 +150,9 @@ class TelegramConfig:
             access_db_path=Path(access_db_raw) if access_db_raw else None,
             memory_db_path=Path(memory_db_raw) if memory_db_raw else None,
             memory_depth=int(memory_depth_raw),
+            materials_db_path=Path(materials_db_raw) if materials_db_raw else None,
+            materials_files_dir=Path(materials_files_raw) if materials_files_raw else None,
+            materials_depth=int(materials_depth_raw),
         )
 
 
@@ -184,6 +201,19 @@ class TelegramAPI:
         if not isinstance(result, dict):
             raise RuntimeError(f"Unexpected Telegram getMe response: {data}")
         return result
+
+    def get_file(self, file_id: str) -> dict[str, object]:
+        data = self.call("getFile", {"file_id": file_id})
+        result = data.get("result")
+        if not isinstance(result, dict):
+            raise RuntimeError(f"Unexpected Telegram getFile response: {data}")
+        return result
+
+    def download_file(self, file_path: str, destination: Path) -> None:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        url = f"{self.base_url.replace('/bot', '/file/bot')}/{file_path}"
+        with request.urlopen(url, timeout=60) as response:
+            destination.write_bytes(response.read())
 
     def send_message(self, chat_id: int, text: str, reply_markup: dict[str, object] | None = None) -> None:
         for chunk in split_telegram_message(text):
@@ -304,6 +334,16 @@ def render_memory_context(events: list[MemoryEvent]) -> str:
     return "\n".join(lines)
 
 
+def render_materials_context(materials: list[ProjectMaterial]) -> str:
+    if not materials:
+        return "Материалы проекта пока не загружены."
+    lines = ["Последние материалы проекта пользователя:"]
+    for material in materials:
+        content = material.content[:3000]
+        lines.append(f"\nМатериал #{material.id}: {material.title} ({material.source_type})\n{content}")
+    return "\n".join(lines)
+
+
 def ask_agent(
     agent: AgentProfile,
     question: str,
@@ -311,6 +351,7 @@ def ask_agent(
     prompts_path: Path | None,
     *,
     memory_events: list[MemoryEvent] | None = None,
+    materials: list[ProjectMaterial] | None = None,
 ) -> str:
     role_prompt = load_agent_prompt(agent.id, prompts_path)
     card = get_agent_card(agent)
@@ -336,8 +377,9 @@ def ask_agent(
                     f"Специалист: {card.label}\n"
                     f"Роль: {card.role}\n"
                     f"Фокус: {agent.focus}\n"
+                    f"Вопрос: {question}\n\n"
                     f"Контекст памяти:\n{render_memory_context(memory_events or [])}\n\n"
-                    f"Вопрос: {question}"
+                    f"Материалы проекта:\n{render_materials_context(materials or [])}"
                 ),
             },
         ],
@@ -495,6 +537,23 @@ def render_memory_status(memory: ConversationMemory | None, user_id: int | None)
     )
 
 
+def render_materials_status(materials: ProjectMaterials | None, user_id: int | None) -> str:
+    if materials is None:
+        return "Материалы проекта не включены. Укажи TELEGRAM_MATERIALS_DB и TELEGRAM_MATERIALS_DIR."
+    user_total = materials.count_materials(user_id) if user_id is not None else 0
+    recent = materials.get_recent_materials(user_id, 10) if user_id is not None else []
+    lines = [
+        "Материалы проекта:",
+        f"- твоих материалов: {user_total}",
+        "- поддерживаются: .docx, .pptx, .txt, .md, .csv, .tsv и ссылки http/https",
+    ]
+    if recent:
+        lines.append("\nПоследние материалы:")
+        for material in recent:
+            lines.append(f"- #{material.id}: {material.title} ({material.source_type})")
+    return "\n".join(lines)
+
+
 def render_users(access_store: AccessStore | None) -> str:
     if access_store is None:
         return "База доступа не включена. Используется TELEGRAM_ALLOWED_USER_IDS."
@@ -518,6 +577,53 @@ def require_admin(access_store: AccessStore | None, user_id: int | None) -> str 
 
 def as_reply(text: str, reply_markup: dict[str, object] | None = None) -> BotReply:
     return BotReply(text=text, reply_markup=reply_markup)
+
+
+def safe_filename(name: str) -> str:
+    cleaned = "".join(char if char.isalnum() or char in "._-" else "_" for char in name)
+    return cleaned[:120] or "material"
+
+
+def store_telegram_document(
+    api: TelegramAPI,
+    document: dict[str, object],
+    user_id: int,
+    materials: ProjectMaterials | None,
+) -> BotReply:
+    if materials is None:
+        return as_reply("Материалы проекта не включены. Укажи TELEGRAM_MATERIALS_DB и TELEGRAM_MATERIALS_DIR.")
+    file_id = document.get("file_id")
+    file_name = document.get("file_name") or "material"
+    if not isinstance(file_id, str) or not isinstance(file_name, str):
+        return as_reply("Не удалось прочитать данные файла из Telegram.")
+    try:
+        telegram_file = api.get_file(file_id)
+        telegram_path = telegram_file.get("file_path")
+        if not isinstance(telegram_path, str):
+            return as_reply("Telegram не вернул путь для скачивания файла.")
+        destination = materials.files_dir / str(user_id) / f"{int(time.time())}_{safe_filename(file_name)}"
+        api.download_file(telegram_path, destination)
+        content = extract_file_text(destination, file_name)
+        material_id = materials.add_material(
+            user_id,
+            "file",
+            file_name,
+            content,
+            file_path=destination,
+        )
+    except Exception as exc:
+        return as_reply(f"Не удалось добавить файл в материалы проекта: {exc}", main_menu_keyboard())
+    return as_reply(
+        "\n".join(
+            [
+                "Файл добавлен в материалы проекта.",
+                f"#{material_id}: {file_name}",
+                "",
+                "Теперь выбери специалиста и задай вопрос по этому файлу.",
+            ]
+        ),
+        main_menu_keyboard(),
+    )
 
 
 def handle_callback(
@@ -672,6 +778,8 @@ def handle_text(
     session: BotSession | None = None,
     memory: ConversationMemory | None = None,
     memory_depth: int = 10,
+    materials: ProjectMaterials | None = None,
+    materials_depth: int = 5,
 ) -> BotReply:
     session = session or BotSession()
     stripped = text.strip()
@@ -689,6 +797,15 @@ def handle_text(
         return as_reply(render_status(mode, agents, allowed_user_ids, access_store), main_menu_keyboard())
     if stripped == "/memory":
         return as_reply(render_memory_status(memory, user_id), main_menu_keyboard())
+    if stripped == "/materials":
+        return as_reply(render_materials_status(materials, user_id), main_menu_keyboard())
+    if stripped == "/clear_materials":
+        if materials is None:
+            return as_reply("Материалы проекта не включены.", main_menu_keyboard())
+        if user_id is None:
+            return as_reply("Telegram user id недоступен.", main_menu_keyboard())
+        materials.clear_user_materials(user_id)
+        return as_reply("Твои материалы проекта очищены.", main_menu_keyboard())
     if stripped == "/forget":
         if memory is None:
             return as_reply("Память диалогов не включена.", main_menu_keyboard())
@@ -705,6 +822,27 @@ def handle_text(
 
     if stripped == "/agents":
         return as_reply(render_agents(agents), agents_keyboard(agents))
+
+    urls = extract_urls(stripped)
+    if urls and materials is not None and user_id is not None:
+        stored: list[str] = []
+        failed: list[str] = []
+        for url in urls[:3]:
+            try:
+                content = fetch_url_text(url)
+                material_id = materials.add_material(user_id, "link", url, content, source_url=url)
+                stored.append(f"#{material_id}: {url}")
+            except Exception as exc:
+                failed.append(f"{url}: {exc}")
+        lines = ["Ссылки добавлены в материалы проекта."] if stored else ["Не удалось добавить ссылки."]
+        if stored:
+            lines.extend(stored)
+        if failed:
+            lines.append("\nОшибки:")
+            lines.extend(failed)
+        lines.append("\nТеперь выбери специалиста и задай вопрос по материалам.")
+        return as_reply("\n".join(lines), main_menu_keyboard())
+
     if stripped.startswith("/ask "):
         rest = stripped[len("/ask ") :].strip()
         if " " not in rest:
@@ -716,7 +854,15 @@ def handle_text(
         session.mode = "agent"
         session.selected_agent_id = agent.id
         memory_events = memory.get_recent_events(user_id, agent.id, memory_depth) if memory and user_id is not None else []
-        response = ask_agent(agent, question, llm_client, prompts_path, memory_events=memory_events)
+        recent_materials = materials.get_recent_materials(user_id, materials_depth) if materials and user_id is not None else []
+        response = ask_agent(
+            agent,
+            question,
+            llm_client,
+            prompts_path,
+            memory_events=memory_events,
+            materials=recent_materials,
+        )
         if memory and user_id is not None:
             memory.add_event(user_id, agent.id, "user", question)
             memory.add_event(user_id, agent.id, "assistant", response)
@@ -737,7 +883,15 @@ def handle_text(
             session.selected_agent_id = None
             return as_reply("Выбранный специалист больше недоступен. Выбери специалиста заново.", agents_keyboard(agents))
         memory_events = memory.get_recent_events(user_id, agent.id, memory_depth) if memory and user_id is not None else []
-        response = ask_agent(agent, stripped, llm_client, prompts_path, memory_events=memory_events)
+        recent_materials = materials.get_recent_materials(user_id, materials_depth) if materials and user_id is not None else []
+        response = ask_agent(
+            agent,
+            stripped,
+            llm_client,
+            prompts_path,
+            memory_events=memory_events,
+            materials=recent_materials,
+        )
         if memory and user_id is not None:
             memory.add_event(user_id, agent.id, "user", stripped)
             memory.add_event(user_id, agent.id, "assistant", response)
@@ -773,6 +927,11 @@ def run_bot(config: TelegramConfig) -> None:
     if access_store and config.owner_user_ids:
         seed_owner_users(access_store, config.owner_user_ids)
     memory = ConversationMemory(config.memory_db_path) if config.memory_db_path else None
+    materials = (
+        ProjectMaterials(config.materials_db_path, config.materials_files_dir)
+        if config.materials_db_path and config.materials_files_dir
+        else None
+    )
     sessions: dict[int, BotSession] = {}
     offset: int | None = None
     print("Telegram bot is running. Press Ctrl+C to stop.")
@@ -835,12 +994,25 @@ def run_bot(config: TelegramConfig) -> None:
             chat = message.get("chat")
             from_user = message.get("from")
             text = message.get("text")
-            if not isinstance(chat, dict) or not isinstance(from_user, dict) or not isinstance(text, str):
+            document = message.get("document")
+            if not isinstance(chat, dict) or not isinstance(from_user, dict):
                 continue
             user_id = int(from_user["id"])
             chat_id = int(chat["id"])
             if not is_user_allowed(access_store, config.allowed_user_ids, user_id):
                 api.send_message(chat_id, f"Доступ запрещен. Твой Telegram user id: {user_id}")
+                continue
+            if isinstance(document, dict):
+                try:
+                    reply = store_telegram_document(api, document, user_id, materials)
+                except Exception as exc:
+                    reply = as_reply(f"Ошибка: {exc}")
+                try:
+                    api.send_message(chat_id, reply.text, reply.reply_markup)
+                except (HTTPError, URLError, TimeoutError, SocketTimeout) as exc:
+                    print(f"Telegram sendMessage error: {exc}.")
+                continue
+            if not isinstance(text, str):
                 continue
             session = sessions.setdefault(user_id, BotSession())
             try:
@@ -856,6 +1028,8 @@ def run_bot(config: TelegramConfig) -> None:
                     session=session,
                     memory=memory,
                     memory_depth=config.memory_depth,
+                    materials=materials,
+                    materials_depth=config.materials_depth,
                 )
             except Exception as exc:
                 reply = as_reply(f"Ошибка: {exc}")

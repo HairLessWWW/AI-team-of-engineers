@@ -7,6 +7,7 @@ from ai_engineering_platform.access_control import AccessStore
 from ai_engineering_platform.agents import AgentProfile
 from ai_engineering_platform.conversation_memory import ConversationMemory
 from ai_engineering_platform.llm import MockLLMClient
+from ai_engineering_platform.project_materials import ProjectMaterials
 from ai_engineering_platform.telegram_bot import (
     BotSession,
     TelegramConfig,
@@ -156,6 +157,26 @@ class TelegramBotTest(unittest.TestCase):
         self.assertIn("Первый вопрос про питание", client.messages[1]["content"])
         self.assertIn("Первый ответ про питание", client.messages[1]["content"])
         self.assertEqual(events_count, 4)
+
+    def test_agent_receives_recent_project_materials(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            materials = ProjectMaterials(Path(tmp) / "materials.db", Path(tmp) / "files")
+            materials.add_material(123, "file", "tz.docx", "Требование: проверить питание 48В")
+            client = RecordingLLMClient()
+
+            response = handle_text(
+                "/ask electrical Что важно проверить?",
+                self.agents,
+                client,
+                prompts_path=None,
+                user_id=123,
+                materials=materials,
+                materials_depth=3,
+            )
+
+        self.assertIn("Recorded response", response.text)
+        self.assertIn("Материалы проекта", client.messages[1]["content"])
+        self.assertIn("Требование: проверить питание 48В", client.messages[1]["content"])
 
     def test_forget_clears_selected_agent_memory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
