@@ -25,6 +25,7 @@ from ai_engineering_platform.web_control import (
     seed_admin_user,
     verify_password,
     CSS,
+    render_page,
 )
 
 
@@ -116,6 +117,13 @@ class WebControlTest(unittest.TestCase):
         self.assertNotIn("inline-editor", html)
         self.assertIn("data-close-modal", html)
 
+    def test_render_page_includes_modal_close_script(self) -> None:
+        config = WebConfig(password="secret")
+        html = render_page(config, "org", "<h1>Штат</h1>").decode("utf-8")
+
+        self.assertIn("is-closed", html)
+        self.assertIn("window.scrollTo(0, y)", html)
+
     def test_delete_org_position(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "web.db"
@@ -156,6 +164,7 @@ class WebControlTest(unittest.TestCase):
     def test_modal_card_stays_above_backdrop(self) -> None:
         self.assertIn(".modal-backdrop { position: absolute; inset: 0; z-index: 0;", CSS)
         self.assertIn(".modal-card { position: relative; z-index: 1;", CSS)
+        self.assertIn(".modal.is-closed { display: none; }", CSS)
 
     def test_save_agent_layout_updates_department_and_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

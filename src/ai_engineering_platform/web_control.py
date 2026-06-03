@@ -1353,11 +1353,23 @@ MODAL_SCRIPT = """
 (() => {
   function closeModalWithoutScroll() {
     const y = window.scrollY;
+    const modal = document.querySelector('.modal:target') || document.querySelector('.modal.is-open');
+    if (modal) {
+      modal.classList.add('is-closed');
+    }
     history.replaceState(null, '', window.location.pathname + window.location.search);
-    window.scrollTo({top: y, left: 0, behavior: 'instant'});
+    window.scrollTo(0, y);
   }
 
   document.addEventListener('click', event => {
+    const opener = event.target.closest('a[href^="#"]');
+    if (opener) {
+      const target = document.querySelector(opener.getAttribute('href'));
+      if (target && target.classList.contains('modal')) {
+        target.classList.remove('is-closed');
+        target.classList.add('is-open');
+      }
+    }
     const closer = event.target.closest('[data-close-modal]');
     if (!closer) return;
     event.preventDefault();
@@ -1428,11 +1440,13 @@ h3 { font-size: 18px; margin: 0; letter-spacing: 0; }
 .agent-card dd { margin: 0; color: #344054; }
 .modal { display: none; position: fixed; inset: 0; z-index: 20; }
 .modal:target { display: block; }
+.modal.is-closed { display: none; }
 .modal-backdrop { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; border: 0; padding: 0; margin: 0; background: rgba(15,23,42,.58); cursor: default; }
 .modal-card { position: relative; z-index: 1; width: min(920px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; margin: 24px auto; background: #fff; border-radius: 8px; padding: 22px; box-shadow: 0 24px 90px rgba(0,0,0,.32); }
 .modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 16px; }
 .modal-head h2 { margin: 0; }
-.close { margin: 0; padding: 0; border: 0; background: transparent; color: var(--muted); text-decoration: none; font-weight: 900; font-size: 20px; line-height: 1; cursor: pointer; }
+.close { margin: 0; padding: 0; border: 0; background: transparent; color: var(--muted); text-decoration: none; font-weight: 900; font-size: 20px; line-height: 1; cursor: pointer; width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; }
+.close:hover { background: #eef2f7; color: #344054; }
 .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 label { display: grid; gap: 6px; font-weight: 700; color: #344054; }
 input, textarea, select { width: 100%; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px 11px; font: inherit; color: var(--ink); background: #fff; }
