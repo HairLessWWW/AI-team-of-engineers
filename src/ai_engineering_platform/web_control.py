@@ -750,9 +750,9 @@ def agent_card(agent: Any, prompt: str) -> str:
     artifacts = ", ".join(agent.expected_artifacts[:3]) or "артефакты не заданы"
     modal_id = f"agent-{h(agent.id)}"
     return f"""
-<article class="agent-card" draggable="true" data-agent-id="{h(agent.id)}">
+<article class="agent-card" data-agent-id="{h(agent.id)}">
   <div class="agent-top">
-    <span class="agent-id"><span class="drag-handle">::</span> {h(agent.id)}</span>
+    <span class="agent-id"><span class="drag-handle" draggable="true" title="Перетащить карточку" aria-label="Перетащить карточку">::</span> {h(agent.id)}</span>
     <a class="icon-button" href="#{modal_id}" aria-label="Открыть настройки">Настройки</a>
   </div>
   <h3>{h(agent.name)}</h3>
@@ -919,14 +919,15 @@ AGENTS_DRAG_SCRIPT = """
     }
   }
 
-  document.querySelectorAll('.agent-card').forEach(card => {
-    card.addEventListener('dragstart', event => {
+  document.querySelectorAll('.drag-handle').forEach(handle => {
+    const card = handle.closest('.agent-card');
+    handle.addEventListener('dragstart', event => {
       dragged = card;
       card.classList.add('dragging');
       event.dataTransfer.effectAllowed = 'move';
       event.dataTransfer.setData('text/plain', card.dataset.agentId);
     });
-    card.addEventListener('dragend', () => {
+    handle.addEventListener('dragend', () => {
       card.classList.remove('dragging');
       zones.forEach(zone => zone.classList.remove('drag-over'));
       dragged = null;
@@ -997,12 +998,13 @@ h3 { font-size: 18px; margin: 0; letter-spacing: 0; }
 .agent-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; min-height: 128px; border: 1px dashed transparent; border-radius: 8px; padding: 2px; }
 .agent-grid.drag-over { border-color: #94a3ff; background: #f1f5ff; }
 .agent-card { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 16px; min-height: 245px; display: grid; grid-template-rows: auto auto 1fr auto; gap: 12px; box-shadow: 0 1px 2px rgba(16,24,40,.04); }
-.agent-card[draggable="true"] { cursor: grab; }
-.agent-card.dragging { opacity: .58; cursor: grabbing; outline: 2px solid #94a3ff; }
+.agent-card.dragging { opacity: .58; outline: 2px solid #94a3ff; }
 .agent-card p { margin: 0; color: #475467; line-height: 1.45; }
 .agent-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .agent-id { color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; }
-.drag-handle { color: #98a2b3; font-weight: 900; margin-right: 4px; }
+.drag-handle { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin-right: 4px; color: #98a2b3; font-weight: 900; border-radius: 6px; cursor: grab; user-select: none; }
+.drag-handle:hover { background: #eef2f7; color: #475467; }
+.drag-handle:active { cursor: grabbing; background: #dbe4f0; }
 .icon-button { color: var(--accent); text-decoration: none; font-size: 13px; font-weight: 800; }
 .agent-card dl { display: grid; grid-template-columns: 86px 1fr; gap: 7px 10px; margin: 0; font-size: 13px; }
 .agent-card dt { color: var(--muted); font-weight: 800; }

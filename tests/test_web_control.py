@@ -84,7 +84,7 @@ class WebControlTest(unittest.TestCase):
         self.assertIn("Инженерия продукта", html)
         self.assertIn("agent-card", html)
         self.assertIn("modal-card", html)
-        self.assertIn('draggable="true"', html)
+        self.assertIn('class="drag-handle" draggable="true"', html)
         self.assertIn("/agents/layout", html)
 
     def test_save_agent_layout_updates_department_and_order(self) -> None:
