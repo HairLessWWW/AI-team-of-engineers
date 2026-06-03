@@ -126,7 +126,49 @@ def init_web_db(db_path: Path) -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS backlog_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                area TEXT NOT NULL DEFAULT 'product',
+                priority TEXT NOT NULL DEFAULT 'medium',
+                status TEXT NOT NULL DEFAULT 'idea',
+                description TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS project_tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                agent_id TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'open',
+                result TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            """
+        )
+        ensure_project_material_columns(connection)
         seed_cto_structure(connection)
+        seed_product_backlog(connection)
+
+
+def ensure_project_material_columns(connection: sqlite3.Connection) -> None:
+    table = connection.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        ("project_materials",),
+    ).fetchone()
+    if table is None:
+        return
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(project_materials)").fetchall()}
+    if "project_id" not in columns:
+        connection.execute("ALTER TABLE project_materials ADD COLUMN project_id INTEGER")
 
 
 CTO_POSITIONS = [
@@ -143,6 +185,37 @@ CTO_POSITIONS = [
     "Chief Assembly Technologist",
     "Field Service and Commissioning Senior Engineer",
     "Lead Quality Engineer",
+]
+
+INITIAL_BACKLOG = [
+    (
+        "Project Workspace v0.1",
+        "product",
+        "high",
+        "planned",
+        "Сделать проект центральной сущностью: материалы, задачи, история и совещания внутри проекта.",
+    ),
+    (
+        "Проектные задачи AI-агентам",
+        "agent-runtime",
+        "high",
+        "planned",
+        "Создавать задачу агенту из проекта, хранить статус, результат и вопросы к человеку.",
+    ),
+    (
+        "Материалы проекта вместо личных материалов",
+        "knowledge",
+        "high",
+        "planned",
+        "Привязывать Word/Excel/PPTX/ссылки к проекту и использовать их в контексте выбранного проекта.",
+    ),
+    (
+        "Протоколы решений и Human Approval",
+        "workflow",
+        "medium",
+        "idea",
+        "Ответы AI переводить в заметки, решения, задачи или отправлять на доработку.",
+    ),
 ]
 
 
@@ -173,6 +246,20 @@ def seed_cto_structure(connection: sqlite3.Connection) -> None:
             """,
             (structure_id, title, suggest_position_department(title), index, now, now),
         )
+
+
+def seed_product_backlog(connection: sqlite3.Connection) -> None:
+    now = int(time.time())
+    for title, area, priority, status, description in INITIAL_BACKLOG:
+        row = connection.execute("SELECT id FROM backlog_items WHERE title = ?", (title,)).fetchone()
+        if row is None:
+            connection.execute(
+                """
+                INSERT INTO backlog_items (title, area, priority, status, description, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (title, area, priority, status, description, now, now),
+            )
 
 
 def suggest_position_department(title: str) -> str:
@@ -300,6 +387,26 @@ def list_projects(db_path: Path) -> list[dict[str, Any]]:
     ]
 
 
+def get_project(db_path: Path, project_id: int) -> dict[str, Any] | None:
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT id, name, status, goal, agents, notes, created_at, updated_at FROM projects WHERE id = ?",
+            (project_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "id": row[0],
+        "name": row[1],
+        "status": row[2],
+        "goal": row[3],
+        "agents": json.loads(row[4] or "[]"),
+        "notes": row[5],
+        "created_at": row[6],
+        "updated_at": row[7],
+    }
+
+
 def save_project(db_path: Path, form: dict[str, list[str]]) -> None:
     now = int(time.time())
     project_id = first(form, "id")
@@ -324,6 +431,110 @@ def save_project(db_path: Path, form: dict[str, list[str]]) -> None:
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (name, status, goal, json.dumps(agents, ensure_ascii=False), notes, now, now),
+            )
+
+
+def list_project_tasks(db_path: Path, project_id: int | None = None) -> list[dict[str, Any]]:
+    query = "SELECT id, project_id, title, agent_id, status, result, created_at, updated_at FROM project_tasks"
+    params: tuple[Any, ...] = ()
+    if project_id is not None:
+        query += " WHERE project_id = ?"
+        params = (project_id,)
+    query += " ORDER BY updated_at DESC, id DESC"
+    with sqlite3.connect(db_path) as connection:
+        rows = connection.execute(query, params).fetchall()
+    return [
+        {
+            "id": row[0],
+            "project_id": row[1],
+            "title": row[2],
+            "agent_id": row[3],
+            "status": row[4],
+            "result": row[5],
+            "created_at": row[6],
+            "updated_at": row[7],
+        }
+        for row in rows
+    ]
+
+
+def save_project_task(db_path: Path, form: dict[str, list[str]]) -> None:
+    now = int(time.time())
+    task_id = first(form, "id")
+    project_id = int(first(form, "project_id"))
+    title = first(form, "title") or "Новая задача"
+    agent_id = first(form, "agent_id")
+    status = first(form, "status") or "open"
+    result = first(form, "result")
+    with sqlite3.connect(db_path) as connection:
+        if task_id:
+            connection.execute(
+                """
+                UPDATE project_tasks SET project_id = ?, title = ?, agent_id = ?, status = ?, result = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (project_id, title, agent_id, status, result, now, int(task_id)),
+            )
+        else:
+            connection.execute(
+                """
+                INSERT INTO project_tasks (project_id, title, agent_id, status, result, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (project_id, title, agent_id, status, result, now, now),
+            )
+
+
+def list_backlog_items(db_path: Path) -> list[dict[str, Any]]:
+    with sqlite3.connect(db_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT id, title, area, priority, status, description, created_at, updated_at
+            FROM backlog_items
+            ORDER BY
+              CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+              id DESC
+            """
+        ).fetchall()
+    return [
+        {
+            "id": row[0],
+            "title": row[1],
+            "area": row[2],
+            "priority": row[3],
+            "status": row[4],
+            "description": row[5],
+            "created_at": row[6],
+            "updated_at": row[7],
+        }
+        for row in rows
+    ]
+
+
+def save_backlog_item(db_path: Path, form: dict[str, list[str]]) -> None:
+    now = int(time.time())
+    item_id = first(form, "id")
+    title = first(form, "title") or "Новая задача backlog"
+    area = first(form, "area") or "product"
+    priority = first(form, "priority") or "medium"
+    status = first(form, "status") or "idea"
+    description = first(form, "description")
+    with sqlite3.connect(db_path) as connection:
+        if item_id:
+            connection.execute(
+                """
+                UPDATE backlog_items SET title = ?, area = ?, priority = ?, status = ?, description = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (title, area, priority, status, description, now, int(item_id)),
+            )
+        else:
+            connection.execute(
+                """
+                INSERT INTO backlog_items (title, area, priority, status, description, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (title, area, priority, status, description, now, now),
             )
 
 
@@ -588,6 +799,7 @@ def render_page(config: WebConfig, active: str, body: str) -> bytes:
         ("agents", "Агенты"),
         ("org", "Штат"),
         ("projects", "Проекты"),
+        ("backlog", "Backlog"),
         ("knowledge", "База знаний"),
         ("history", "История"),
         ("rules", "Правила"),
@@ -657,7 +869,8 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
     config: WebConfig
 
     def do_GET(self) -> None:
-        path = parse.urlparse(self.path).path.strip("/") or "dashboard"
+        parsed_url = parse.urlparse(self.path)
+        path = parsed_url.path.strip("/") or "dashboard"
         if path == "login":
             self.respond(render_login())
             return
@@ -676,6 +889,8 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
             "agents": self.render_agents,
             "org": self.render_org,
             "projects": self.render_projects,
+            "project": lambda: self.render_project(parse.parse_qs(parsed_url.query)),
+            "backlog": self.render_backlog,
             "knowledge": self.render_knowledge,
             "history": self.render_history,
             "rules": self.render_rules,
@@ -727,6 +942,16 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
                 self.require_role(user, {"owner", "admin", "member"})
                 save_project(self.config.web_db_path, form)
                 self.redirect("/projects")
+                return
+            if path == "/project/task/save":
+                self.require_role(user, {"owner", "admin", "member"})
+                save_project_task(self.config.web_db_path, form)
+                self.redirect(f"/project?id={first(form, 'project_id')}")
+                return
+            if path == "/backlog/save":
+                self.require_role(user, {"owner", "admin", "member"})
+                save_backlog_item(self.config.web_db_path, form)
+                self.redirect("/backlog")
                 return
             if path == "/rules/save":
                 self.require_role(user, {"owner", "admin"})
@@ -889,6 +1114,56 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
         existing = "".join(project_form(project, agents) for project in projects)
         return f"<h1>Проекты</h1><p class='lead'>Проект связывает цель, AI-сотрудников, заметки и будущие материалы.</p>{project_form(None, agents)}{existing}"
 
+    def render_project(self, query: dict[str, list[str]]) -> str:
+        project_id_raw = query.get("id", [""])[0]
+        if not project_id_raw:
+            return "<h1>Проект не выбран</h1><p class='lead'>Открой проект из списка проектов.</p>"
+        project = get_project(self.config.web_db_path, int(project_id_raw))
+        if project is None:
+            return "<h1>Проект не найден</h1>"
+        agents = load_agents(self.config.agents_path)
+        tasks = list_project_tasks(self.config.web_db_path, project["id"])
+        materials = recent_materials(self.config.materials_db_path, 100)
+        return f"""
+<div class="page-head">
+  <div>
+    <h1>{h(project['name'])}</h1>
+    <p class="lead">{h(project['goal'] or 'Цель проекта не задана.')}</p>
+  </div>
+  <a class="button-link" href="/projects">Все проекты</a>
+</div>
+<section class="metrics">
+  {metric("Задачи", len(tasks))}
+  {metric("Материалы", len(materials))}
+  {metric("AI-участники", len(project['agents']))}
+  {metric("Статус", project['status'])}
+</section>
+<section class="grid two">
+  <div>{panel_title("Задачи агентам")}{project_task_list(tasks, agents)}</div>
+  <div>{panel_title("Новая задача")}{project_task_form(None, project['id'], agents)}</div>
+</section>
+<section class="card">
+  <h2>Материалы</h2>
+  <p class="lead">Сейчас показаны последние материалы базы знаний. Следующий шаг - строгая привязка материалов к проекту при загрузке.</p>
+  {materials_table(materials[:20])}
+</section>
+"""
+
+    def render_backlog(self) -> str:
+        items = list_backlog_items(self.config.web_db_path)
+        return f"""
+<div class="page-head">
+  <div>
+    <h1>Backlog</h1>
+    <p class="lead">Идеи и задачи развития продукта, которые появляются по ходу работы.</p>
+  </div>
+</div>
+<section class="grid two">
+  <div>{panel_title("Очередь продукта")}{backlog_list(items)}</div>
+  <div>{panel_title("Добавить идею")}{backlog_form(None)}</div>
+</section>
+"""
+
     def render_knowledge(self) -> str:
         materials = recent_materials(self.config.materials_db_path, 100)
         rows = "".join(
@@ -949,8 +1224,94 @@ def project_list(projects: list[dict[str, Any]], agents: list[Any]) -> str:
     items = []
     for project in projects:
         labels = ", ".join(known.get(agent_id, agent_id) for agent_id in project["agents"]) or "агенты не выбраны"
-        items.append(f"<li><strong>{h(project['name'])}</strong><span>{h(project['status'])} · {h(labels)}</span></li>")
+        items.append(f"<li><strong><a href='/project?id={h(project['id'])}'>{h(project['name'])}</a></strong><span>{h(project['status'])} · {h(labels)}</span></li>")
     return f"<ul class='list'>{''.join(items)}</ul>"
+
+
+def project_task_list(tasks: list[dict[str, Any]], agents: list[Any]) -> str:
+    if not tasks:
+        return "<p class='muted'>Задач пока нет.</p>"
+    agent_names = {agent.id: agent.name for agent in agents}
+    items = []
+    for task in tasks:
+        agent = agent_names.get(task["agent_id"], "AI-агент не выбран")
+        items.append(
+            f"<article class='event'><div>{h(task['status'])} · {h(agent)} · {fmt_time(task['updated_at'])}</div><p><strong>{h(task['title'])}</strong></p><p>{h(task['result'])}</p></article>"
+        )
+    return "".join(items)
+
+
+def project_task_form(task: dict[str, Any] | None, project_id: int, agents: list[Any]) -> str:
+    agent_options = ["<option value=''>Не выбран</option>"]
+    for agent in agents:
+        selected = "selected" if task and task["agent_id"] == agent.id else ""
+        agent_options.append(f"<option value='{h(agent.id)}' {selected}>{h(agent.name)}</option>")
+    return f"""
+<form class="compact-form" method="post" action="/project/task/save">
+  <input type="hidden" name="id" value="{h(task['id'] if task else '')}">
+  <input type="hidden" name="project_id" value="{h(project_id)}">
+  <label class="wide">Задача<input name="title" value="{h(task['title'] if task else '')}" placeholder="Например: проверить BOM по питанию"></label>
+  <label>AI-агент<select name="agent_id">{''.join(agent_options)}</select></label>
+  <label>Статус
+    <select name="status">
+      <option value="open">open</option>
+      <option value="in_progress">in_progress</option>
+      <option value="done">done</option>
+      <option value="needs_human">needs_human</option>
+    </select>
+  </label>
+  <label class="wide">Результат / заметки<textarea name="result">{h(task['result'] if task else '')}</textarea></label>
+  <button type="submit">Сохранить задачу</button>
+</form>
+"""
+
+
+def materials_table(materials: list[dict[str, Any]]) -> str:
+    if not materials:
+        return "<p class='muted'>Материалов пока нет.</p>"
+    rows = "".join(
+        f"<tr><td>#{m['id']}</td><td>{h(m['title'])}</td><td>{h(m['source_type'])}</td><td>{fmt_time(m['created_at'])}</td></tr>"
+        for m in materials
+    )
+    return f"<table><thead><tr><th>ID</th><th>Материал</th><th>Тип</th><th>Дата</th></tr></thead><tbody>{rows}</tbody></table>"
+
+
+def backlog_list(items: list[dict[str, Any]]) -> str:
+    if not items:
+        return "<p class='muted'>Backlog пока пуст.</p>"
+    cards = []
+    for item in items:
+        cards.append(
+            f"<article class='backlog-card'><div><strong>{h(item['title'])}</strong><span>{h(item['area'])} · {h(item['priority'])} · {h(item['status'])}</span></div><p>{h(item['description'])}</p></article>"
+        )
+    return "".join(cards)
+
+
+def backlog_form(item: dict[str, Any] | None) -> str:
+    return f"""
+<form class="compact-form" method="post" action="/backlog/save">
+  <input type="hidden" name="id" value="{h(item['id'] if item else '')}">
+  <label class="wide">Название<input name="title" value="{h(item['title'] if item else '')}"></label>
+  <label>Область<input name="area" value="{h(item['area'] if item else 'product')}"></label>
+  <label>Приоритет
+    <select name="priority">
+      <option value="high">high</option>
+      <option value="medium" selected>medium</option>
+      <option value="low">low</option>
+    </select>
+  </label>
+  <label>Статус
+    <select name="status">
+      <option value="idea" selected>idea</option>
+      <option value="planned">planned</option>
+      <option value="in_progress">in_progress</option>
+      <option value="done">done</option>
+    </select>
+  </label>
+  <label class="wide">Описание<textarea name="description">{h(item['description'] if item else '')}</textarea></label>
+  <button type="submit">Сохранить backlog</button>
+</form>
+"""
 
 
 def history_list(events: list[dict[str, Any]]) -> str:
@@ -1204,7 +1565,10 @@ def project_form(project: dict[str, Any] | None, agents: list[Any]) -> str:
     return f"""
 <form class="card" method="post" action="/projects/save">
   <input type="hidden" name="id" value="{h(project['id'] if project else '')}">
-  <h2>{h(project['name'] if project else 'Новый проект')}</h2>
+  <div class="form-title-row">
+    <h2>{h(project['name'] if project else 'Новый проект')}</h2>
+    {f'<a class="text-action" href="/project?id={h(project["id"])}">Открыть workspace</a>' if project else ''}
+  </div>
   <div class="fields">
     <label>Название<input name="name" value="{h(project['name'] if project else '')}"></label>
     <label>Статус<input name="status" value="{h(project['status'] if project else 'active')}"></label>
@@ -1420,6 +1784,8 @@ h3 { font-size: 18px; margin: 0; letter-spacing: 0; }
 .metric strong { font-size: 34px; line-height: 1.15; }
 .grid.two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .card { margin: 18px 0; }
+.form-title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.form-title-row h2 { margin: 0; }
 .department { margin: 22px 0 30px; }
 .department-head { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; margin-bottom: 12px; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
 .department-head h2 { margin: 0; }
@@ -1464,6 +1830,9 @@ th { background: #eef2f7; font-size: 13px; color: #344054; }
 .list span, .org span, .event div { color: var(--muted); font-size: 13px; }
 .event { border-bottom: 1px solid var(--line); padding: 12px 0; }
 .event p { margin: 6px 0 0; line-height: 1.45; }
+.backlog-card { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 10px; display: grid; gap: 8px; }
+.backlog-card span { display: block; color: var(--muted); font-size: 13px; font-weight: 700; margin-top: 3px; }
+.backlog-card p { margin: 0; color: #475467; line-height: 1.4; }
 .org { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 20px; }
 .cto { display: inline-block; background: #e7efff; border: 1px solid #b7c8ff; color: #183a8f; padding: 12px 16px; border-radius: 8px; font-weight: 800; margin-bottom: 18px; }
 .org ul { margin: 0; padding-left: 24px; display: grid; gap: 12px; }

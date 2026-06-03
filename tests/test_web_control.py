@@ -13,13 +13,17 @@ from ai_engineering_platform.web_control import (
     init_web_db,
     list_org_positions,
     list_org_structures,
+    list_backlog_items,
+    list_project_tasks,
     list_projects,
     list_rules,
     list_web_users,
     save_agent,
     save_agent_layout,
+    save_backlog_item,
     save_org_structure,
     save_project,
+    save_project_task,
     save_rule,
     save_web_user,
     seed_admin_user,
@@ -213,6 +217,61 @@ class WebControlTest(unittest.TestCase):
 
         self.assertEqual(len(projects), 1)
         self.assertEqual(projects[0]["agents"], ["electrical", "manufacturing"])
+
+    def test_seed_product_backlog(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "web.db"
+            init_web_db(db_path)
+            items = list_backlog_items(db_path)
+
+        self.assertGreaterEqual(len(items), 4)
+        self.assertIn("Project Workspace v0.1", [item["title"] for item in items])
+
+    def test_save_backlog_item(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "web.db"
+            init_web_db(db_path)
+            save_backlog_item(
+                db_path,
+                {"title": ["Новая идея"], "area": ["ui"], "priority": ["low"], "status": ["idea"], "description": ["Описание"]},
+            )
+            items = list_backlog_items(db_path)
+
+        self.assertIn("Новая идея", [item["title"] for item in items])
+
+    def test_save_project_task_roundtrip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "web.db"
+            init_web_db(db_path)
+            save_project(db_path, {"name": ["Проект"], "status": ["active"], "goal": [""], "notes": [""]})
+            project = list_projects(db_path)[0]
+            save_project_task(
+                db_path,
+                {"project_id": [str(project["id"])], "title": ["Проверить BOM"], "agent_id": ["electrical"], "status": ["open"], "result": [""]},
+            )
+            tasks = list_project_tasks(db_path, project["id"])
+
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0]["agent_id"], "electrical")
+
+    def test_render_project_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agents_path = root / "agents.json"
+            agents_path.write_text('{"agents": []}', encoding="utf-8")
+            db_path = root / "web.db"
+            init_web_db(db_path)
+            save_project(db_path, {"name": ["Робот V1"], "status": ["active"], "goal": ["Пилот"], "notes": [""]})
+            project = list_projects(db_path)[0]
+            config = WebConfig(password="secret", agents_path=agents_path, prompts_path=root / "prompts", web_db_path=db_path)
+            handler = object.__new__(ControlCenterHandler)
+            handler.config = config
+
+            html = handler.render_project({"id": [str(project["id"])]})
+
+        self.assertIn("Робот V1", html)
+        self.assertIn("Задачи агентам", html)
+        self.assertIn("/project/task/save", html)
 
     def test_seed_cto_structure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
