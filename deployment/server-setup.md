@@ -74,6 +74,15 @@ OPENAI_MODEL=gpt-4.1-mini
 OPENAI_BASE_URL=https://api.openai.com/v1
 ```
 
+For DeepSeek mode:
+
+```bash
+AI_ENGINEERING_BOT_MODE=deepseek
+DEEPSEEK_API_KEY=replace-with-deepseek-api-key
+DEEPSEEK_MODEL=deepseek-v4-flash
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+```
+
 ## 7. Check Telegram connectivity
 
 ```bash

@@ -131,6 +131,15 @@ $env:OPENAI_API_KEY = "..."
 $env:OPENAI_MODEL = "gpt-4.1-mini"
 ```
 
+DeepSeek-режим использует официальный OpenAI-compatible endpoint DeepSeek:
+
+```powershell
+$env:AI_ENGINEERING_BOT_MODE = "deepseek"
+$env:DEEPSEEK_API_KEY = "..."
+$env:DEEPSEEK_MODEL = "deepseek-v4-flash"
+$env:DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+```
+
 ## Текущие ограничения
 
 - Бот использует long polling, а не webhooks.

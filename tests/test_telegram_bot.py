@@ -5,6 +5,7 @@ from ai_engineering_platform.agents import AgentProfile
 from ai_engineering_platform.llm import MockLLMClient
 from ai_engineering_platform.telegram_bot import (
     TelegramConfig,
+    build_llm_client,
     find_agent,
     handle_callback,
     handle_text,
@@ -156,6 +157,11 @@ class TelegramBotTest(unittest.TestCase):
             config = TelegramConfig.from_env()
 
         self.assertEqual(config.allowed_user_ids, {1, 2})
+
+    def test_build_deepseek_client_requires_key(self) -> None:
+        with unittest.mock.patch.dict("os.environ", {}, clear=True):
+            with self.assertRaises(RuntimeError):
+                build_llm_client("deepseek")
 
 
 if __name__ == "__main__":

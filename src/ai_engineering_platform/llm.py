@@ -65,3 +65,21 @@ class OpenAICompatibleLLMClient:
         with request.urlopen(http_request, timeout=self.timeout_seconds) as response:
             data = json.loads(response.read().decode("utf-8"))
         return data["choices"][0]["message"]["content"]
+
+
+@dataclass(frozen=True)
+class DeepSeekLLMClient(OpenAICompatibleLLMClient):
+    """DeepSeek OpenAI-compatible chat completions client."""
+
+    base_url: str = "https://api.deepseek.com"
+
+    @classmethod
+    def from_env(cls) -> "DeepSeekLLMClient":
+        api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not api_key:
+            raise RuntimeError("DEEPSEEK_API_KEY is required for --mode deepseek.")
+        return cls(
+            api_key=api_key,
+            model=os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
+            base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/"),
+        )

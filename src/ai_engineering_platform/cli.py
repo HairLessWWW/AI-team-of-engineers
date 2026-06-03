@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .agents import load_agents
 from .artifacts import load_artifacts
-from .llm import MockLLMClient, OpenAICompatibleLLMClient
+from .llm import DeepSeekLLMClient, MockLLMClient, OpenAICompatibleLLMClient
 from .orchestrator import build_readiness_report
 from .telegram_bot import TelegramConfig, check_bot, run_bot
 
@@ -22,9 +22,9 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--output", required=True, type=Path, help="Markdown report output path.")
     review.add_argument(
         "--mode",
-        choices=["heuristic", "mock-llm", "llm"],
+        choices=["heuristic", "mock-llm", "llm", "deepseek"],
         default="heuristic",
-        help="Analysis mode. Use heuristic for offline runs, mock-llm for tests, llm for an OpenAI-compatible API.",
+        help="Analysis mode. Use heuristic for offline runs, mock-llm for tests, llm for OpenAI-compatible API, deepseek for DeepSeek API.",
     )
 
     telegram_bot = subparsers.add_parser("telegram-bot", help="Run the Telegram bot frontend.")
@@ -32,9 +32,9 @@ def build_parser() -> argparse.ArgumentParser:
     telegram_bot.add_argument("--prompts", default=Path("prompts"), type=Path, help="Folder with role prompt templates.")
     telegram_bot.add_argument(
         "--mode",
-        choices=["mock-llm", "llm"],
+        choices=["mock-llm", "llm", "deepseek"],
         default=os.getenv("AI_ENGINEERING_BOT_MODE", "mock-llm"),
-        help="Bot analysis mode. Use mock-llm for local testing or llm for an OpenAI-compatible API.",
+        help="Bot analysis mode. Use mock-llm for local testing, llm for OpenAI-compatible API, deepseek for DeepSeek API.",
     )
 
     subparsers.add_parser("telegram-check", help="Check Telegram bot token and connectivity.")
@@ -49,6 +49,8 @@ def run_review(project: Path, agents_path: Path, prompts_path: Path, output: Pat
         llm_client = MockLLMClient()
     elif mode == "llm":
         llm_client = OpenAICompatibleLLMClient.from_env()
+    elif mode == "deepseek":
+        llm_client = DeepSeekLLMClient.from_env()
     report = build_readiness_report(project, artifacts, agents, llm_client=llm_client, prompts_dir=prompts_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(report, encoding="utf-8")

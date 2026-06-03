@@ -10,7 +10,7 @@ from urllib import parse, request
 from urllib.error import HTTPError, URLError
 
 from .agents import AgentProfile, load_agents
-from .llm import LLMClient, MockLLMClient, OpenAICompatibleLLMClient
+from .llm import DeepSeekLLMClient, LLMClient, MockLLMClient, OpenAICompatibleLLMClient
 from .prompts import load_agent_prompt
 
 
@@ -158,6 +158,8 @@ def build_llm_client(mode: str) -> LLMClient:
         return MockLLMClient(response_prefix="Telegram mock analysis")
     if mode == "llm":
         return OpenAICompatibleLLMClient.from_env()
+    if mode == "deepseek":
+        return DeepSeekLLMClient.from_env()
     raise ValueError(f"Unsupported Telegram bot mode: {mode}")
 
 

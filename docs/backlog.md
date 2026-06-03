@@ -256,6 +256,23 @@ Acceptance criteria:
 - Есть кнопки для статуса, whoami, выбора агента и совещания.
 - После ответа есть быстрые действия: спросить другого агента, начать совещание, статус.
 
+### M4-00C. Добавить DeepSeek provider mode
+
+Priority: high
+
+Status: done
+
+Description:
+
+Добавить отдельный режим LLM-провайдера для DeepSeek через OpenAI-compatible API.
+
+Acceptance criteria:
+
+- Есть режим `AI_ENGINEERING_BOT_MODE=deepseek`.
+- DeepSeek client читает `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`, `DEEPSEEK_BASE_URL`.
+- Модель по умолчанию `deepseek-v4-flash`.
+- Документация deployment обновлена.
+
 ### M4-01. Создать web dashboard prototype
 
 Priority: medium
