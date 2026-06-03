@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import os
 import time
@@ -17,47 +17,76 @@ from .prompts import load_agent_prompt
 
 HELP_TEXT = """AI Team of Engineers
 
+Это бот с AI-сотрудниками инженерной команды.
+
+Основной сценарий:
+1. Нажми "Специалисты".
+2. Выбери нужного специалиста.
+3. Нажми "Начать чат".
+4. Пиши обычным текстом.
+
 Команды:
-/start - показать меню
+/start - главное меню
+/help - справка
 /whoami - показать твой Telegram user id
 /status - статус бота
-/users - список пользователей, admin
-/allow <telegram_id> [role] - добавить пользователя, admin
-/deny <telegram_id> - отключить пользователя, admin
-/role <telegram_id> <role> - изменить роль, admin
-/agents - список AI-сотрудников
-/ask <agent_id> <вопрос> - задать вопрос одному AI-сотруднику
-/meeting <тема> - собрать совещание всех MVP-агентов
-/meeting <agent_id,agent_id> <тема> - собрать выбранных агентов
+/agents - список специалистов
+/ask <agent_id> <вопрос> - задать вопрос специалисту
+/meeting <тема> - совещание всех MVP-агентов
+/meeting <agent_id,agent_id> <тема> - совещание выбранных агентов
 
-Примеры:
-/ask electrical Что может заблокировать пилотную сборку?
-/ask электрик Что блокирует пилотную сборку?
-/meeting Готовность руки антропоморфного робота к пилотной партии
-/meeting systems,electrical,manufacturing Готовность руки к пилотной сборке
+Администрирование:
+/users
+/allow <telegram_id> [owner|admin|member|viewer]
+/deny <telegram_id>
+/role <telegram_id> <owner|admin|member|viewer]
 """
 
 
+@dataclass(frozen=True)
+class AgentCard:
+    id: str
+    label: str
+    role: str
+    description: str
+    aliases: tuple[str, ...] = ()
+
+
+AGENT_CARDS = {
+    "systems": AgentCard(
+        id="systems",
+        label="Системный архитектор",
+        role="Systems Engineering / Chief Architect",
+        description="Смотрит на робота как на систему: требования, интерфейсы, архитектура, риски между направлениями.",
+        aliases=("system", "architect", "архитектор", "системщик", "системный"),
+    ),
+    "electrical": AgentCard(
+        id="electrical",
+        label="Ведущий электрик",
+        role="Electrical Lead Engineer",
+        description="Питание, защиты, шкафы, кабели, разъемы, электрический BOM, FAT/SAT по электрике.",
+        aliases=("electric", "электрик", "электрика"),
+    ),
+    "manufacturing": AgentCard(
+        id="manufacturing",
+        label="Технолог производства",
+        role="Manufacturing Engineering",
+        description="Пилотная сборка, технологические карты, оснастка, контроль, калибровка, производственные blockers.",
+        aliases=("production", "производство", "технолог"),
+    ),
+    "certification_docs": AgentCard(
+        id="certification_docs",
+        label="Документация и сертификация",
+        role="Certification and Technical Documentation",
+        description="Паспорта, РЭ, инструкции, ПМИ, протоколы, risk assessment, комплектность документации.",
+        aliases=("certification", "docs", "documentation", "сертификация", "документация"),
+    ),
+}
+
 AGENT_ALIASES = {
-    "system": "systems",
-    "systems": "systems",
-    "architect": "systems",
-    "архитектор": "systems",
-    "системщик": "systems",
-    "системный": "systems",
-    "electrical": "electrical",
-    "electric": "electrical",
-    "электрик": "electrical",
-    "электрика": "electrical",
-    "manufacturing": "manufacturing",
-    "production": "manufacturing",
-    "производство": "manufacturing",
-    "технолог": "manufacturing",
-    "certification": "certification_docs",
-    "docs": "certification_docs",
-    "documentation": "certification_docs",
-    "сертификация": "certification_docs",
-    "документация": "certification_docs",
+    alias: card.id
+    for card in AGENT_CARDS.values()
+    for alias in (card.id, *card.aliases)
 }
 
 
@@ -78,15 +107,9 @@ class TelegramConfig:
         if not token:
             raise RuntimeError("TELEGRAM_BOT_TOKEN is required to run the Telegram bot.")
         allowed_ids_raw = os.getenv("TELEGRAM_ALLOWED_USER_IDS", "").strip()
-        allowed_user_ids = None
-        if allowed_ids_raw:
-            allowed_user_ids = {int(item.strip()) for item in allowed_ids_raw.split(",") if item.strip()}
+        allowed_user_ids = parse_user_ids(allowed_ids_raw)
         owner_ids_raw = os.getenv("TELEGRAM_OWNER_IDS", "").strip()
-        owner_user_ids = None
-        if owner_ids_raw:
-            owner_user_ids = {int(item.strip()) for item in owner_ids_raw.split(",") if item.strip()}
-        elif allowed_user_ids:
-            owner_user_ids = set(allowed_user_ids)
+        owner_user_ids = parse_user_ids(owner_ids_raw) or (set(allowed_user_ids) if allowed_user_ids else None)
         access_db_raw = os.getenv("TELEGRAM_ACCESS_DB", "").strip()
         return cls(
             token=token,
@@ -101,6 +124,13 @@ class TelegramConfig:
 class BotReply:
     text: str
     reply_markup: dict[str, object] | None = None
+
+
+@dataclass
+class BotSession:
+    mode: str = "idle"
+    selected_agent_id: str | None = None
+    meeting_agent_ids: set[str] = field(default_factory=set)
 
 
 class TelegramAPI:
@@ -143,8 +173,26 @@ class TelegramAPI:
                 payload["reply_markup"] = reply_markup
             self.call("sendMessage", payload)
 
+    def edit_message_text(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+        reply_markup: dict[str, object] | None = None,
+    ) -> None:
+        payload: dict[str, object] = {"chat_id": chat_id, "message_id": message_id, "text": text}
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        self.call("editMessageText", payload)
+
     def answer_callback_query(self, callback_query_id: str) -> None:
         self.call("answerCallbackQuery", {"callback_query_id": callback_query_id})
+
+
+def parse_user_ids(raw: str) -> set[int] | None:
+    if not raw:
+        return None
+    return {int(item.strip()) for item in raw.split(",") if item.strip()}
 
 
 def split_telegram_message(text: str, limit: int = 3800) -> list[str]:
@@ -192,12 +240,24 @@ def find_agent(agents: list[AgentProfile], agent_id: str) -> AgentProfile | None
     return None
 
 
+def get_agent_card(agent: AgentProfile) -> AgentCard:
+    return AGENT_CARDS.get(
+        agent.id,
+        AgentCard(
+            id=agent.id,
+            label=agent.name,
+            role=agent.name,
+            description=agent.focus,
+        ),
+    )
+
+
 def llm_error_message(exc: Exception) -> str:
     if isinstance(exc, HTTPError) and exc.code == 429:
         return (
-            "LLM-провайдер вернул 429 Too Many Requests. "
-            "Сейчас недоступна квота, биллинг или rate limit. "
-            "Сам бот работает; можно временно перейти в mock-режим или попробовать короткий запрос к одному агенту позже."
+            "LLM-провайдер вернул 429 Too Many Requests.\n\n"
+            "Сейчас недоступна квота, биллинг или rate limit. Сам бот работает; "
+            "можно временно перейти в mock-режим или попробовать короткий запрос к одному специалисту позже."
         )
     if isinstance(exc, HTTPError):
         return f"HTTP-ошибка LLM-провайдера {exc.code}: {exc.reason}"
@@ -215,6 +275,7 @@ def complete_safely(llm_client: LLMClient, messages: list[dict[str, str]]) -> st
 
 def ask_agent(agent: AgentProfile, question: str, llm_client: LLMClient, prompts_path: Path | None) -> str:
     role_prompt = load_agent_prompt(agent.id, prompts_path)
+    card = get_agent_card(agent)
     system_prompt = (
         "Ты AI-сотрудник робототехнической компании. Отвечай на русском языке как ведущий специалист. "
         "Пиши структурно и прикладно. Отделяй факты, предположения, риски, открытые вопросы, рекомендации "
@@ -227,16 +288,25 @@ def ask_agent(agent: AgentProfile, question: str, llm_client: LLMClient, prompts
         llm_client,
         [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Агент: {agent.name}\nФокус: {agent.focus}\nВопрос: {question}"},
+            {
+                "role": "user",
+                "content": (
+                    f"Специалист: {card.label}\n"
+                    f"Роль: {card.role}\n"
+                    f"Фокус: {agent.focus}\n"
+                    f"Вопрос: {question}"
+                ),
+            },
         ],
     )
 
 
 def run_meeting(agents: list[AgentProfile], topic: str, llm_client: LLMClient, prompts_path: Path | None) -> str:
-    sections = [f"# Engineering Meeting\n\nTopic: {topic}\n"]
+    sections = [f"# Инженерное совещание\n\nТема: {topic}\n"]
     for agent in agents:
+        card = get_agent_card(agent)
         response = ask_agent(agent, f"Дай свою позицию для инженерного совещания по теме: {topic}", llm_client, prompts_path)
-        sections.append(f"## {agent.name}\n\n{response}\n")
+        sections.append(f"## {card.label}\n\n{response}\n")
     summary_prompt = (
         "Суммируй это инженерное совещание для CTO на русском языке. Включи консенсус, разногласия, риски, "
         "открытые вопросы и следующие действия. Не заявляй финальное утверждение.\n\n"
@@ -249,39 +319,41 @@ def run_meeting(agents: list[AgentProfile], topic: str, llm_client: LLMClient, p
             {"role": "user", "content": summary_prompt},
         ],
     )
-    sections.append(f"## CTO Control Tower Summary\n\n{summary}")
+    sections.append(f"## Итог для CTO\n\n{summary}")
     return "\n".join(sections)
 
 
-def render_agents(agents: list[AgentProfile]) -> str:
-    lines = ["Доступные AI-сотрудники:"]
-    for agent in agents:
-        lines.append(f"- {agent.id}: {agent.name}")
-    lines.extend(
-        [
-            "",
-            "Псевдонимы:",
-            "- электрик -> electrical",
-            "- производство / технолог -> manufacturing",
-            "- сертификация / документация -> certification_docs",
-            "- архитектор / системщик -> systems",
-        ]
+def render_start() -> str:
+    return (
+        "AI Team of Engineers\n\n"
+        "Выбери специалиста и пиши ему обычным текстом. "
+        "Или собери совещание из нескольких AI-сотрудников.\n\n"
+        "Команды спрятаны в /help."
     )
+
+
+def render_agents(agents: list[AgentProfile]) -> str:
+    lines = ["Специалисты:"]
+    for agent in agents:
+        card = get_agent_card(agent)
+        lines.append(f"\n{card.label}\nРоль: {card.role}\n{card.description}")
     return "\n".join(lines)
+
+
+def render_agent_profile(agent: AgentProfile) -> str:
+    card = get_agent_card(agent)
+    return f"{card.label}\n\nРоль: {card.role}\n\n{card.description}\n\nНажми \"Начать чат\", чтобы общаться с этим специалистом."
 
 
 def main_menu_keyboard() -> dict[str, object]:
     return {
         "inline_keyboard": [
+            [{"text": "Специалисты", "callback_data": "menu:agents"}],
+            [{"text": "Собрать совещание", "callback_data": "meeting:start"}],
             [
-                {"text": "AI-сотрудники", "callback_data": "menu:agents"},
                 {"text": "Статус", "callback_data": "menu:status"},
+                {"text": "Справка", "callback_data": "menu:help"},
             ],
-            [
-                {"text": "Задать вопрос", "callback_data": "menu:ask"},
-                {"text": "Совещание", "callback_data": "menu:meeting"},
-            ],
-            [{"text": "Мой Telegram ID", "callback_data": "menu:whoami"}],
         ]
     }
 
@@ -289,30 +361,76 @@ def main_menu_keyboard() -> dict[str, object]:
 def agents_keyboard(agents: list[AgentProfile]) -> dict[str, object]:
     rows = []
     for agent in agents:
-        rows.append([{"text": agent.id, "callback_data": f"agent:{agent.id}"}])
-    rows.append([{"text": "Назад в меню", "callback_data": "menu:start"}])
+        card = get_agent_card(agent)
+        rows.append([{"text": card.label, "callback_data": f"agent:{agent.id}"}])
+    rows.append([{"text": "Назад", "callback_data": "menu:start"}])
     return {"inline_keyboard": rows}
 
 
-def after_answer_keyboard() -> dict[str, object]:
+def agent_profile_keyboard(agent: AgentProfile) -> dict[str, object]:
     return {
         "inline_keyboard": [
-            [
-                {"text": "Спросить другого", "callback_data": "menu:ask"},
-                {"text": "Начать совещание", "callback_data": "menu:meeting"},
-            ],
-            [{"text": "Статус", "callback_data": "menu:status"}],
+            [{"text": "Начать чат", "callback_data": f"chat:{agent.id}"}],
+            [{"text": "Назад к специалистам", "callback_data": "menu:agents"}],
         ]
     }
 
 
-def render_status(mode: str, agents: list[AgentProfile], allowed_user_ids: set[int] | None) -> str:
-    access = "restricted" if allowed_user_ids else "open"
+def after_answer_keyboard(agent_id: str | None = None) -> dict[str, object]:
+    rows = []
+    if agent_id:
+        rows.append([{"text": "Продолжить с этим специалистом", "callback_data": f"chat:{agent_id}"}])
+    rows.append(
+        [
+            {"text": "Другой специалист", "callback_data": "menu:agents"},
+            {"text": "Совещание", "callback_data": "meeting:start"},
+        ]
+    )
+    rows.append([{"text": "Главное меню", "callback_data": "menu:start"}])
+    return {"inline_keyboard": rows}
+
+
+def meeting_keyboard(agents: list[AgentProfile], selected_ids: set[str]) -> dict[str, object]:
+    rows = []
+    for agent in agents:
+        card = get_agent_card(agent)
+        marker = "[x]" if agent.id in selected_ids else "[ ]"
+        rows.append([{"text": f"{marker} {card.label}", "callback_data": f"meeting:toggle:{agent.id}"}])
+    rows.append([{"text": "Дальше: написать тему", "callback_data": "meeting:run"}])
+    rows.append(
+        [
+            {"text": "Выбрать всех", "callback_data": "meeting:all"},
+            {"text": "Очистить", "callback_data": "meeting:clear"},
+        ]
+    )
+    rows.append([{"text": "Назад", "callback_data": "menu:start"}])
+    return {"inline_keyboard": rows}
+
+
+def render_meeting_selection(agents: list[AgentProfile], selected_ids: set[str]) -> str:
+    if selected_ids:
+        selected_labels = [get_agent_card(agent).label for agent in agents if agent.id in selected_ids]
+        selected_text = ", ".join(selected_labels)
+    else:
+        selected_text = "пока никто не выбран"
+    return f"Совещание\n\nВыбери участников кнопками.\n\nСейчас выбрано: {selected_text}"
+
+
+def render_status(
+    mode: str,
+    agents: list[AgentProfile],
+    allowed_user_ids: set[int] | None,
+    access_store: AccessStore | None = None,
+) -> str:
+    if access_store:
+        access = "база пользователей"
+    else:
+        access = "whitelist" if allowed_user_ids else "открытый"
     return "\n".join(
         [
             "Статус бота:",
             f"- режим: {mode}",
-            f"- агентов загружено: {len(agents)}",
+            f"- специалистов загружено: {len(agents)}",
             f"- доступ: {access}",
             "- интерфейс: Telegram long polling",
         ]
@@ -352,33 +470,64 @@ def handle_callback(
     user_id: int | None,
     allowed_user_ids: set[int] | None,
     access_store: AccessStore | None = None,
+    session: BotSession | None = None,
 ) -> BotReply:
+    session = session or BotSession()
     if callback_data == "menu:start":
+        session.mode = "idle"
+        session.selected_agent_id = None
+        return as_reply(render_start(), main_menu_keyboard())
+    if callback_data == "menu:help":
         return as_reply(HELP_TEXT, main_menu_keyboard())
     if callback_data == "menu:agents":
+        session.mode = "idle"
         return as_reply(render_agents(agents), agents_keyboard(agents))
     if callback_data == "menu:status":
-        return as_reply(render_status(mode, agents, allowed_user_ids), main_menu_keyboard())
-    if callback_data == "menu:whoami":
-        if user_id is None:
-            return as_reply("Telegram user id недоступен.", main_menu_keyboard())
-        return as_reply(f"Твой Telegram user id: {user_id}", main_menu_keyboard())
-    if callback_data == "menu:ask":
-        return as_reply("Выбери AI-сотрудника, затем отправь: /ask <agent_id> <вопрос>", agents_keyboard(agents))
-    if callback_data == "menu:meeting":
-        return as_reply(
-            "Отправь одну из команд:\n/meeting <тема>\n/meeting systems,electrical,manufacturing <тема>",
-            main_menu_keyboard(),
-        )
+        return as_reply(render_status(mode, agents, allowed_user_ids, access_store), main_menu_keyboard())
     if callback_data.startswith("agent:"):
         agent_id = callback_data[len("agent:") :]
         agent = find_agent(agents, agent_id)
         if not agent:
-            return as_reply(f"Неизвестный агент: {agent_id}", agents_keyboard(agents))
+            return as_reply(f"Неизвестный специалист: {agent_id}", agents_keyboard(agents))
+        return as_reply(render_agent_profile(agent), agent_profile_keyboard(agent))
+    if callback_data.startswith("chat:"):
+        agent_id = callback_data[len("chat:") :]
+        agent = find_agent(agents, agent_id)
+        if not agent:
+            return as_reply(f"Неизвестный специалист: {agent_id}", agents_keyboard(agents))
+        session.mode = "agent"
+        session.selected_agent_id = agent.id
+        card = get_agent_card(agent)
         return as_reply(
-            f"{agent.name}\n\nФокус: {agent.focus}\n\nОтправь:\n/ask {agent.id} <твой вопрос>",
-            after_answer_keyboard(),
+            f"Чат со специалистом: {card.label}\n\nТеперь просто напиши вопрос обычным сообщением.",
+            after_answer_keyboard(agent.id),
         )
+    if callback_data == "meeting:start":
+        session.mode = "meeting_select"
+        if not session.meeting_agent_ids:
+            session.meeting_agent_ids = {agent.id for agent in agents}
+        return as_reply(render_meeting_selection(agents, session.meeting_agent_ids), meeting_keyboard(agents, session.meeting_agent_ids))
+    if callback_data.startswith("meeting:toggle:"):
+        session.mode = "meeting_select"
+        agent_id = callback_data[len("meeting:toggle:") :]
+        if agent_id in session.meeting_agent_ids:
+            session.meeting_agent_ids.remove(agent_id)
+        else:
+            session.meeting_agent_ids.add(agent_id)
+        return as_reply(render_meeting_selection(agents, session.meeting_agent_ids), meeting_keyboard(agents, session.meeting_agent_ids))
+    if callback_data == "meeting:all":
+        session.mode = "meeting_select"
+        session.meeting_agent_ids = {agent.id for agent in agents}
+        return as_reply(render_meeting_selection(agents, session.meeting_agent_ids), meeting_keyboard(agents, session.meeting_agent_ids))
+    if callback_data == "meeting:clear":
+        session.mode = "meeting_select"
+        session.meeting_agent_ids.clear()
+        return as_reply(render_meeting_selection(agents, session.meeting_agent_ids), meeting_keyboard(agents, session.meeting_agent_ids))
+    if callback_data == "meeting:run":
+        if not session.meeting_agent_ids:
+            return as_reply("Выбери хотя бы одного участника совещания.", meeting_keyboard(agents, session.meeting_agent_ids))
+        session.mode = "meeting_topic"
+        return as_reply("Напиши тему совещания обычным сообщением.", meeting_keyboard(agents, session.meeting_agent_ids))
     return as_reply("Неизвестное действие кнопки.", main_menu_keyboard())
 
 
@@ -396,31 +545,16 @@ def parse_meeting_request(rest: str, agents: list[AgentProfile]) -> tuple[list[A
         if unknown:
             return [], possible_topic, f"Неизвестные участники совещания: {', '.join(unknown)}"
         if not selected_agents:
-            return [], possible_topic, "Не выбрано ни одного корректного агента для совещания."
+            return [], possible_topic, "Не выбрано ни одного корректного специалиста для совещания."
         return selected_agents, possible_topic.strip(), None
     return agents, rest.strip(), None
 
 
-def handle_text(
-    text: str,
-    agents: list[AgentProfile],
-    llm_client: LLMClient,
-    prompts_path: Path | None,
-    *,
-    mode: str = "mock-llm",
-    user_id: int | None = None,
-    allowed_user_ids: set[int] | None = None,
-    access_store: AccessStore | None = None,
-) -> BotReply:
-    stripped = text.strip()
-    if stripped in {"/start", "/help"}:
-        return as_reply(HELP_TEXT, main_menu_keyboard())
-    if stripped == "/whoami":
-        if user_id is None:
-            return as_reply("Telegram user id недоступен в этом контексте.", main_menu_keyboard())
-        return as_reply(f"Твой Telegram user id: {user_id}", main_menu_keyboard())
-    if stripped == "/status":
-        return as_reply(render_status(mode, agents, allowed_user_ids), main_menu_keyboard())
+def handle_admin_command(
+    stripped: str,
+    user_id: int | None,
+    access_store: AccessStore | None,
+) -> BotReply | None:
     if stripped == "/users":
         denied = require_admin(access_store, user_id)
         if denied:
@@ -462,6 +596,40 @@ def handle_text(
         assert access_store is not None
         access_store.set_role(int(parts[1]), role)
         return as_reply(f"Пользователю {parts[1]} назначена роль {role}.", main_menu_keyboard())
+    return None
+
+
+def handle_text(
+    text: str,
+    agents: list[AgentProfile],
+    llm_client: LLMClient,
+    prompts_path: Path | None,
+    *,
+    mode: str = "mock-llm",
+    user_id: int | None = None,
+    allowed_user_ids: set[int] | None = None,
+    access_store: AccessStore | None = None,
+    session: BotSession | None = None,
+) -> BotReply:
+    session = session or BotSession()
+    stripped = text.strip()
+    if stripped == "/start":
+        session.mode = "idle"
+        session.selected_agent_id = None
+        return as_reply(render_start(), main_menu_keyboard())
+    if stripped == "/help":
+        return as_reply(HELP_TEXT, main_menu_keyboard())
+    if stripped == "/whoami":
+        if user_id is None:
+            return as_reply("Telegram user id недоступен в этом контексте.", main_menu_keyboard())
+        return as_reply(f"Твой Telegram user id: {user_id}", main_menu_keyboard())
+    if stripped == "/status":
+        return as_reply(render_status(mode, agents, allowed_user_ids, access_store), main_menu_keyboard())
+
+    admin_reply = handle_admin_command(stripped, user_id, access_store)
+    if admin_reply:
+        return admin_reply
+
     if stripped == "/agents":
         return as_reply(render_agents(agents), agents_keyboard(agents))
     if stripped.startswith("/ask "):
@@ -471,8 +639,10 @@ def handle_text(
         agent_id, question = rest.split(" ", 1)
         agent = find_agent(agents, agent_id)
         if not agent:
-            return as_reply(f"Неизвестный агент: {agent_id}\n\n{render_agents(agents)}", agents_keyboard(agents))
-        return as_reply(ask_agent(agent, question, llm_client, prompts_path), after_answer_keyboard())
+            return as_reply(f"Неизвестный специалист: {agent_id}\n\n{render_agents(agents)}", agents_keyboard(agents))
+        session.mode = "agent"
+        session.selected_agent_id = agent.id
+        return as_reply(ask_agent(agent, question, llm_client, prompts_path), after_answer_keyboard(agent.id))
     if stripped.startswith("/meeting "):
         rest = stripped[len("/meeting ") :].strip()
         meeting_agents, topic, error = parse_meeting_request(rest, agents)
@@ -481,7 +651,35 @@ def handle_text(
         if not topic:
             return as_reply("Используй: /meeting <тема> или /meeting <agent_id,agent_id> <тема>", main_menu_keyboard())
         return as_reply(run_meeting(meeting_agents, topic, llm_client, prompts_path), after_answer_keyboard())
-    return as_reply("Я не понял команду.\n\n" + HELP_TEXT, main_menu_keyboard())
+
+    if session.mode == "agent" and session.selected_agent_id:
+        agent = find_agent(agents, session.selected_agent_id)
+        if not agent:
+            session.mode = "idle"
+            session.selected_agent_id = None
+            return as_reply("Выбранный специалист больше недоступен. Выбери специалиста заново.", agents_keyboard(agents))
+        return as_reply(ask_agent(agent, stripped, llm_client, prompts_path), after_answer_keyboard(agent.id))
+
+    if session.mode == "meeting_topic":
+        meeting_agents = [agent for agent in agents if agent.id in session.meeting_agent_ids]
+        if not meeting_agents:
+            session.mode = "meeting_select"
+            return as_reply("Участники совещания не выбраны.", meeting_keyboard(agents, session.meeting_agent_ids))
+        session.mode = "idle"
+        return as_reply(run_meeting(meeting_agents, stripped, llm_client, prompts_path), after_answer_keyboard())
+
+    return as_reply(
+        "Выбери специалиста кнопкой, а потом пиши ему обычным текстом.",
+        main_menu_keyboard(),
+    )
+
+
+def is_user_allowed(access_store: AccessStore | None, allowed_user_ids: set[int] | None, user_id: int) -> bool:
+    if access_store is not None:
+        return access_store.is_allowed(user_id)
+    if allowed_user_ids is not None:
+        return user_id in allowed_user_ids
+    return True
 
 
 def run_bot(config: TelegramConfig) -> None:
@@ -491,6 +689,7 @@ def run_bot(config: TelegramConfig) -> None:
     access_store = AccessStore(config.access_db_path) if config.access_db_path else None
     if access_store and config.owner_user_ids:
         seed_owner_users(access_store, config.owner_user_ids)
+    sessions: dict[int, BotSession] = {}
     offset: int | None = None
     print("Telegram bot is running. Press Ctrl+C to stop.")
     while True:
@@ -514,17 +713,16 @@ def run_bot(config: TelegramConfig) -> None:
                     and isinstance(message, dict)
                     and isinstance(from_user, dict)
                     and isinstance(message.get("chat"), dict)
+                    and isinstance(message.get("message_id"), int)
                 ):
                     user_id = int(from_user["id"])
                     chat_id = int(message["chat"]["id"])
-                    if access_store is not None and not access_store.is_allowed(user_id):
+                    message_id = int(message["message_id"])
+                    if not is_user_allowed(access_store, config.allowed_user_ids, user_id):
                         api.answer_callback_query(callback_id)
                         api.send_message(chat_id, f"Доступ запрещен. Твой Telegram user id: {user_id}")
                         continue
-                    if access_store is None and config.allowed_user_ids is not None and user_id not in config.allowed_user_ids:
-                        api.answer_callback_query(callback_id)
-                        api.send_message(chat_id, "Доступ запрещен.")
-                        continue
+                    session = sessions.setdefault(user_id, BotSession())
                     try:
                         reply = handle_callback(
                             callback_data,
@@ -533,15 +731,17 @@ def run_bot(config: TelegramConfig) -> None:
                             user_id=user_id,
                             allowed_user_ids=config.allowed_user_ids,
                             access_store=access_store,
+                            session=session,
                         )
                     except Exception as exc:
                         reply = as_reply(f"Ошибка: {exc}")
                     try:
                         api.answer_callback_query(callback_id)
-                        api.send_message(chat_id, reply.text, reply.reply_markup)
+                        api.edit_message_text(chat_id, message_id, reply.text, reply.reply_markup)
                     except (HTTPError, URLError, TimeoutError, SocketTimeout) as exc:
                         print(f"Telegram callback handling error: {exc}.")
                 continue
+
             message = update.get("message")
             if not isinstance(message, dict):
                 continue
@@ -552,12 +752,10 @@ def run_bot(config: TelegramConfig) -> None:
                 continue
             user_id = int(from_user["id"])
             chat_id = int(chat["id"])
-            if access_store is not None and not access_store.is_allowed(user_id):
+            if not is_user_allowed(access_store, config.allowed_user_ids, user_id):
                 api.send_message(chat_id, f"Доступ запрещен. Твой Telegram user id: {user_id}")
                 continue
-            if access_store is None and config.allowed_user_ids is not None and user_id not in config.allowed_user_ids:
-                api.send_message(chat_id, "Доступ запрещен.")
-                continue
+            session = sessions.setdefault(user_id, BotSession())
             try:
                 reply = handle_text(
                     text,
@@ -568,6 +766,7 @@ def run_bot(config: TelegramConfig) -> None:
                     user_id=user_id,
                     allowed_user_ids=config.allowed_user_ids,
                     access_store=access_store,
+                    session=session,
                 )
             except Exception as exc:
                 reply = as_reply(f"Ошибка: {exc}")

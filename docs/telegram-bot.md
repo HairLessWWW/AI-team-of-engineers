@@ -1,101 +1,46 @@
 # Telegram Bot MVP
 
-Telegram-бот - первый легкий интерфейс к AI Team of Engineers.
+Telegram-бот - первый дружелюбный интерфейс к AI Team of Engineers.
 
-Он позволяет CTO:
+## Основной сценарий
 
-- смотреть список доступных AI-сотрудников;
-- задавать вопрос одному AI-сотруднику;
-- собирать короткое инженерное совещание нескольких агентов;
-- пользоваться кнопками для частых действий;
-- запускать mock-режим до подключения настоящего LLM.
+1. Пользователь нажимает `/start`.
+2. Бот показывает главное меню.
+3. Пользователь выбирает специалиста кнопкой.
+4. Бот показывает краткую роль специалиста.
+5. Пользователь нажимает `Начать чат`.
+6. После этого можно писать обычным текстом, без команд.
 
-## Создание Telegram-бота
+Для совещания:
 
-1. Открой Telegram и напиши `@BotFather`.
-2. Выполни `/newbot`.
-3. Выбери имя и username.
-4. Скопируй token.
+1. Нажать `Собрать совещание`.
+2. Выбрать участников кнопками.
+3. Нажать `Дальше: написать тему`.
+4. Написать тему обычным сообщением.
 
-Не коммить token в GitHub и не показывай его на скриншотах.
+При кликах по меню бот редактирует предыдущее сообщение, чтобы чат не разрастался от каждого выбора.
 
-## Локальный запуск
+## Специалисты
 
-```powershell
-$env:TELEGRAM_BOT_TOKEN = "token-from-botfather"
-$env:AI_ENGINEERING_BOT_MODE = "mock-llm"
-$env:PYTHONPATH = "src"
-python -m ai_engineering_platform telegram-bot
-```
+- `systems` - Системный архитектор.
+- `electrical` - Ведущий электрик.
+- `manufacturing` - Технолог производства.
+- `certification_docs` - Документация и сертификация.
 
-Перед запуском долгоживущего бота можно проверить подключение к Telegram:
+## Псевдонимы
 
-```powershell
-$env:PYTHONPATH = "src"
-$env:TELEGRAM_BOT_TOKEN = "token-from-botfather"
-python -m ai_engineering_platform telegram-check
-```
-
-Если команда уходит в timeout, машина не может достучаться до `api.telegram.org`. Проверь VPN, proxy, firewall, настройки хостинга или доступность Telegram из текущей сети.
-
-## Ограничение доступа
-
-Чтобы бот отвечал только тебе, используй `TELEGRAM_ALLOWED_USER_IDS`.
-
-Свой user id можно узнать командой:
-
-```text
-/whoami
-```
-
-Затем на сервере:
-
-```powershell
-$env:TELEGRAM_ALLOWED_USER_IDS = "123456789"
-```
-
-Несколько пользователей можно указать через запятую:
-
-```powershell
-$env:TELEGRAM_ALLOWED_USER_IDS = "123456789,987654321"
-```
-
-## База пользователей и роли
-
-Для нескольких уровней доступа включи SQLite-базу:
-
-```powershell
-$env:TELEGRAM_ACCESS_DB = "work/access.db"
-$env:TELEGRAM_OWNER_IDS = "123456789"
-```
-
-На сервере:
-
-```bash
-TELEGRAM_ACCESS_DB=/var/lib/ai-team-of-engineers/access.db
-TELEGRAM_OWNER_IDS=123456789
-```
-
-Роли:
-
-- `owner` - полный доступ, управление пользователями;
-- `admin` - управление пользователями;
-- `member` - обычное использование бота;
-- `viewer` - пока имеет доступ к боту, но зарезервирован для будущего read-only режима.
-
-Команды управления:
-
-```text
-/users
-/allow <telegram_id> [owner|admin|member|viewer]
-/deny <telegram_id>
-/role <telegram_id> <owner|admin|member|viewer>
-```
+- `электрик`, `электрика` -> `electrical`
+- `производство`, `технолог` -> `manufacturing`
+- `сертификация`, `документация` -> `certification_docs`
+- `архитектор`, `системщик` -> `systems`
 
 ## Команды
 
+Команды остаются для быстрого доступа и администрирования:
+
 ```text
 /start
+/help
 /whoami
 /status
 /agents
@@ -104,80 +49,62 @@ TELEGRAM_OWNER_IDS=123456789
 /meeting <agent_id,agent_id> <тема>
 ```
 
-## Кнопки
-
-Бот показывает inline-кнопки для:
-
-- списка AI-сотрудников;
-- статуса;
-- выбора агента;
-- совещания;
-- Telegram user id;
-- возврата в меню.
-
-Кнопки агентов пока не хранят черновик вопроса. Они показывают точную команду `/ask <agent_id> <вопрос>`, которую нужно отправить следующим сообщением.
-
-Примеры:
+Администрирование:
 
 ```text
-/ask electrical Что может заблокировать пилотную сборку?
-/ask электрик Что блокирует пилотную сборку?
-/ask manufacturing Что нужно подготовить перед пилотной партией?
-/meeting Готовность руки антропоморфного робота к пилотной партии
-/meeting systems,electrical,manufacturing Готовность руки к пилотной сборке
+/users
+/allow <telegram_id> [owner|admin|member|viewer]
+/deny <telegram_id>
+/role <telegram_id> <owner|admin|member|viewer>
 ```
 
-## Псевдонимы агентов
+## База пользователей и роли
 
-Поддерживаются псевдонимы:
+Для нескольких уровней доступа используется SQLite:
 
-- `электрик`, `электрика` -> `electrical`
-- `производство`, `технолог` -> `manufacturing`
-- `сертификация`, `документация` -> `certification_docs`
-- `архитектор`, `системщик` -> `systems`
-
-## Операционные команды
-
-`/whoami` показывает Telegram user id для настройки `TELEGRAM_ALLOWED_USER_IDS`.
-
-`/status` показывает:
-
-- режим бота;
-- количество загруженных агентов;
-- открыт ли доступ или включен whitelist;
-- режим Telegram-интерфейса.
-
-## Режимы
-
-Mock-режим полезен для проверки UX без расходов на LLM:
-
-```powershell
-$env:AI_ENGINEERING_BOT_MODE = "mock-llm"
+```bash
+TELEGRAM_ACCESS_DB=/var/lib/ai-team-of-engineers/access.db
+TELEGRAM_OWNER_IDS=123456789
 ```
 
-LLM-режим использует OpenAI-compatible API client:
+Роли:
 
-```powershell
-$env:AI_ENGINEERING_BOT_MODE = "llm"
-$env:OPENAI_API_KEY = "..."
-$env:OPENAI_MODEL = "gpt-4.1-mini"
+- `owner` - полный доступ и управление пользователями.
+- `admin` - управление пользователями.
+- `member` - обычное использование бота.
+- `viewer` - зарезервирован для будущего read-only режима.
+
+Если база не включена, используется fallback `TELEGRAM_ALLOWED_USER_IDS`.
+
+## Режимы LLM
+
+Mock:
+
+```bash
+AI_ENGINEERING_BOT_MODE=mock-llm
 ```
 
-DeepSeek-режим использует официальный OpenAI-compatible endpoint DeepSeek:
+DeepSeek:
 
-```powershell
-$env:AI_ENGINEERING_BOT_MODE = "deepseek"
-$env:DEEPSEEK_API_KEY = "..."
-$env:DEEPSEEK_MODEL = "deepseek-v4-flash"
-$env:DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+```bash
+AI_ENGINEERING_BOT_MODE=deepseek
+DEEPSEEK_API_KEY=...
+DEEPSEEK_MODEL=deepseek-v4-flash
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+```
+
+OpenAI-compatible:
+
+```bash
+AI_ENGINEERING_BOT_MODE=llm
+OPENAI_API_KEY=...
+OPENAI_MODEL=gpt-4.1-mini
+OPENAI_BASE_URL=https://api.openai.com/v1
 ```
 
 ## Текущие ограничения
 
-- Бот использует long polling, а не webhooks.
-- Сетевые timeout во время polling повторяются автоматически.
-- Ошибка LLM-провайдера `429 Too Many Requests` показывается понятным сообщением.
-- Inline-кнопки пока являются быстрыми переходами к командам; полноценная память многошаговой сессии еще не реализована.
-- Project memory и загрузка файлов еще не реализованы.
-- Совещание по умолчанию вызывает всех MVP-агентов, либо выбранных агентов, если они указаны.
+- Сессии пользователя пока хранятся в памяти процесса и сбрасываются при restart сервиса.
+- Загрузка файлов и project memory еще не реализованы.
+- `viewer` пока технически имеет доступ как обычный пользователь; read-only поведение будет добавлено позже.
 - Human approval workflow еще не реализован.
