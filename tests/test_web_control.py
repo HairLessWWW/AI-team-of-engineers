@@ -9,11 +9,14 @@ from ai_engineering_platform.web_control import (
     authenticate_user,
     hash_password,
     init_web_db,
+    list_org_positions,
+    list_org_structures,
     list_projects,
     list_rules,
     list_web_users,
     save_agent,
     save_agent_layout,
+    save_org_structure,
     save_project,
     save_rule,
     save_web_user,
@@ -87,6 +90,22 @@ class WebControlTest(unittest.TestCase):
         self.assertIn('class="drag-handle" draggable="true"', html)
         self.assertIn("/agents/layout", html)
 
+    def test_render_org_contains_cto_structure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agents_path = root / "agents.json"
+            agents_path.write_text('{"agents": []}', encoding="utf-8")
+            db_path = root / "web.db"
+            init_web_db(db_path)
+            config = WebConfig(password="secret", agents_path=agents_path, prompts_path=root / "prompts", web_db_path=db_path)
+            handler = object.__new__(ControlCenterHandler)
+            handler.config = config
+
+            html = handler.render_org()
+
+        self.assertIn("Структура технического директора", html)
+        self.assertIn("Electrical Lead Engineer", html)
+
     def test_save_agent_layout_updates_department_and_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             agents_path = Path(tmp) / "agents.json"
@@ -134,6 +153,36 @@ class WebControlTest(unittest.TestCase):
 
         self.assertEqual(len(projects), 1)
         self.assertEqual(projects[0]["agents"], ["electrical", "manufacturing"])
+
+    def test_seed_cto_structure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "web.db"
+            init_web_db(db_path)
+            structures = list_org_structures(db_path)
+            positions = list_org_positions(db_path, structures[0]["id"])
+
+        self.assertEqual(structures[0]["name"], "Структура технического директора")
+        self.assertEqual(len(positions), 13)
+        self.assertIn("Electrical Lead Engineer", [position["title"] for position in positions])
+
+    def test_save_child_org_structure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "web.db"
+            init_web_db(db_path)
+            parent = list_org_structures(db_path)[0]
+            save_org_structure(
+                db_path,
+                {
+                    "name": ["Производственный блок"],
+                    "parent_id": [str(parent["id"])],
+                    "description": ["Сборка и качество"],
+                    "sort_order": ["10"],
+                },
+            )
+            structures = list_org_structures(db_path)
+
+        child = next(item for item in structures if item["name"] == "Производственный блок")
+        self.assertEqual(child["parent_id"], parent["id"])
 
     def test_save_rule_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

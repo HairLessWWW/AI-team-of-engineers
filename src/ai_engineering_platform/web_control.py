@@ -98,6 +98,96 @@ def init_web_db(db_path: Path) -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS org_structures (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                parent_id INTEGER,
+                description TEXT NOT NULL DEFAULT '',
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS org_positions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                structure_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                department TEXT NOT NULL DEFAULT '',
+                agent_id TEXT NOT NULL DEFAULT '',
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                notes TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            """
+        )
+        seed_cto_structure(connection)
+
+
+CTO_POSITIONS = [
+    "Electrical Lead Engineer",
+    "Mechanical Design Lead",
+    "Embedded Robot Control Engineer",
+    "PLC and Industrial Senior Software Engineer",
+    "Firmware Senior Engineer",
+    "Robotics Application Senior Software Engineer",
+    "Certification and Technical Documentation Senior Engineer",
+    "AI-system Architect",
+    "Product Manager",
+    "Production and Assembly Manager",
+    "Chief Assembly Technologist",
+    "Field Service and Commissioning Senior Engineer",
+    "Lead Quality Engineer",
+]
+
+
+def seed_cto_structure(connection: sqlite3.Connection) -> None:
+    row = connection.execute("SELECT id FROM org_structures WHERE name = ?", ("Структура технического директора",)).fetchone()
+    if row is not None:
+        return
+    now = int(time.time())
+    cursor = connection.execute(
+        """
+        INSERT INTO org_structures (name, parent_id, description, sort_order, created_at, updated_at)
+        VALUES (?, NULL, ?, ?, ?, ?)
+        """,
+        (
+            "Структура технического директора",
+            "Базовая верхнеуровневая структура CTO для робототехнической инженерной организации.",
+            0,
+            now,
+            now,
+        ),
+    )
+    structure_id = int(cursor.lastrowid)
+    for index, title in enumerate(CTO_POSITIONS):
+        connection.execute(
+            """
+            INSERT INTO org_positions (structure_id, title, department, sort_order, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (structure_id, title, suggest_position_department(title), index, now, now),
+        )
+
+
+def suggest_position_department(title: str) -> str:
+    lowered = title.lower()
+    if "production" in lowered or "assembly" in lowered or "technologist" in lowered or "quality" in lowered:
+        return "Производство и качество"
+    if "certification" in lowered or "documentation" in lowered:
+        return "Сертификация и документация"
+    if "product manager" in lowered:
+        return "Продукт"
+    if "software" in lowered or "firmware" in lowered or "embedded" in lowered or "ai-system" in lowered:
+        return "ПО и системы управления"
+    if "field service" in lowered or "commissioning" in lowered:
+        return "Сервис и пусконаладка"
+    return "Инженерия продукта"
 
 
 def seed_admin_user(db_path: Path, password: str) -> None:
@@ -234,6 +324,114 @@ def save_project(db_path: Path, form: dict[str, list[str]]) -> None:
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (name, status, goal, json.dumps(agents, ensure_ascii=False), notes, now, now),
+            )
+
+
+def list_org_structures(db_path: Path) -> list[dict[str, Any]]:
+    with sqlite3.connect(db_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT id, name, parent_id, description, sort_order, created_at, updated_at
+            FROM org_structures
+            ORDER BY sort_order, id
+            """
+        ).fetchall()
+    return [
+        {
+            "id": row[0],
+            "name": row[1],
+            "parent_id": row[2],
+            "description": row[3],
+            "sort_order": row[4],
+            "created_at": row[5],
+            "updated_at": row[6],
+        }
+        for row in rows
+    ]
+
+
+def list_org_positions(db_path: Path, structure_id: int | None = None) -> list[dict[str, Any]]:
+    query = """
+        SELECT id, structure_id, title, department, agent_id, sort_order, notes, created_at, updated_at
+        FROM org_positions
+    """
+    params: tuple[Any, ...] = ()
+    if structure_id is not None:
+        query += " WHERE structure_id = ?"
+        params = (structure_id,)
+    query += " ORDER BY structure_id, sort_order, id"
+    with sqlite3.connect(db_path) as connection:
+        rows = connection.execute(query, params).fetchall()
+    return [
+        {
+            "id": row[0],
+            "structure_id": row[1],
+            "title": row[2],
+            "department": row[3],
+            "agent_id": row[4],
+            "sort_order": row[5],
+            "notes": row[6],
+            "created_at": row[7],
+            "updated_at": row[8],
+        }
+        for row in rows
+    ]
+
+
+def save_org_structure(db_path: Path, form: dict[str, list[str]]) -> None:
+    now = int(time.time())
+    structure_id = first(form, "id")
+    name = first(form, "name") or "Новая структура"
+    parent_raw = first(form, "parent_id")
+    parent_id = int(parent_raw) if parent_raw else None
+    description = first(form, "description")
+    sort_order = int(first(form, "sort_order") or "0")
+    with sqlite3.connect(db_path) as connection:
+        if structure_id:
+            connection.execute(
+                """
+                UPDATE org_structures
+                SET name = ?, parent_id = ?, description = ?, sort_order = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (name, parent_id, description, sort_order, now, int(structure_id)),
+            )
+        else:
+            connection.execute(
+                """
+                INSERT INTO org_structures (name, parent_id, description, sort_order, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (name, parent_id, description, sort_order, now, now),
+            )
+
+
+def save_org_position(db_path: Path, form: dict[str, list[str]]) -> None:
+    now = int(time.time())
+    position_id = first(form, "id")
+    structure_id = int(first(form, "structure_id"))
+    title = first(form, "title") or "Новая позиция"
+    department = first(form, "department")
+    agent_id = first(form, "agent_id")
+    sort_order = int(first(form, "sort_order") or "0")
+    notes = first(form, "notes")
+    with sqlite3.connect(db_path) as connection:
+        if position_id:
+            connection.execute(
+                """
+                UPDATE org_positions
+                SET structure_id = ?, title = ?, department = ?, agent_id = ?, sort_order = ?, notes = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (structure_id, title, department, agent_id, sort_order, notes, now, int(position_id)),
+            )
+        else:
+            connection.execute(
+                """
+                INSERT INTO org_positions (structure_id, title, department, agent_id, sort_order, notes, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (structure_id, title, department, agent_id, sort_order, notes, now, now),
             )
 
 
@@ -525,6 +723,16 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
                 save_web_user(self.config.web_db_path, form)
                 self.redirect("/settings")
                 return
+            if path == "/org/structure/save":
+                self.require_role(user, {"owner", "admin"})
+                save_org_structure(self.config.web_db_path, form)
+                self.redirect("/org")
+                return
+            if path == "/org/position/save":
+                self.require_role(user, {"owner", "admin"})
+                save_org_position(self.config.web_db_path, form)
+                self.redirect("/org")
+                return
         except Exception as exc:
             self.respond(render_page(self.config, "settings", f"<h1>Ошибка</h1><p>{h(exc)}</p>"), HTTPStatus.BAD_REQUEST)
             return
@@ -638,14 +846,16 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
 
     def render_org(self) -> str:
         agents = load_agents(self.config.agents_path)
-        items = "".join(f"<li><strong>{h(agent.name)}</strong><span>{h(agent.focus)}</span></li>" for agent in agents)
+        structures = list_org_structures(self.config.web_db_path)
+        positions = list_org_positions(self.config.web_db_path)
         return f"""
 <h1>Штатная структура</h1>
-<p class="lead">Первый MVP показывает текущий штат AI-сотрудников. Следующий шаг - связи подчинения и эскалации.</p>
-<div class="org">
-  <div class="cto">CTO / Human Approval</div>
-  <ul>{items}</ul>
-</div>
+<p class="lead">Несколько структур можно объединять через родительскую структуру: CTO, производство, продукт, сервис, сертификация.</p>
+<section class="grid two">
+  <div>{panel_title("Структуры")}{org_structure_tree(structures)}</div>
+  <div>{panel_title("Добавить структуру")}{org_structure_form(None, structures)}</div>
+</section>
+{org_structure_sections(structures, positions, agents)}
 """
 
     def render_projects(self) -> str:
@@ -730,6 +940,107 @@ def history_list(events: list[dict[str, Any]]) -> str:
             f"<article class='event'><div>{h(event['agent_id'])} · {h(event['role'])} · {fmt_time(event['created_at'])}</div><p>{h(content)}</p></article>"
         )
     return "".join(items)
+
+
+def org_structure_tree(structures: list[dict[str, Any]]) -> str:
+    if not structures:
+        return "<p class='muted'>Структур пока нет.</p>"
+    children: dict[int | None, list[dict[str, Any]]] = {}
+    for structure in structures:
+        children.setdefault(structure["parent_id"], []).append(structure)
+
+    def render_branch(parent_id: int | None) -> str:
+        items = []
+        for structure in children.get(parent_id, []):
+            items.append(
+                f"<li><strong>{h(structure['name'])}</strong><span>{h(structure['description'] or 'без описания')}</span>{render_branch(structure['id'])}</li>"
+            )
+        return f"<ul>{''.join(items)}</ul>" if items else ""
+
+    return f"<div class='org-tree'>{render_branch(None)}</div>"
+
+
+def org_structure_sections(
+    structures: list[dict[str, Any]],
+    positions: list[dict[str, Any]],
+    agents: list[Any],
+) -> str:
+    if not structures:
+        return ""
+    by_structure: dict[int, list[dict[str, Any]]] = {}
+    for position in positions:
+        by_structure.setdefault(position["structure_id"], []).append(position)
+    sections = []
+    for structure in structures:
+        position_cards = "".join(org_position_card(position, agents) for position in by_structure.get(structure["id"], []))
+        sections.append(
+            f"""
+<section class="org-structure">
+  <div class="department-head">
+    <div>
+      <h2>{h(structure['name'])}</h2>
+      <p class="muted">{h(structure['description'] or 'Описание не задано.')}</p>
+    </div>
+    <span>{len(by_structure.get(structure['id'], []))} позиций</span>
+  </div>
+  <div class="position-grid">{position_cards}</div>
+  {org_position_form(None, structure['id'], agents)}
+</section>
+"""
+        )
+    return "".join(sections)
+
+
+def org_position_card(position: dict[str, Any], agents: list[Any]) -> str:
+    agent_name = next((agent.name for agent in agents if agent.id == position["agent_id"]), "")
+    agent_line = f"<span>AI-агент: {h(agent_name)}</span>" if agent_name else "<span>AI-агент не привязан</span>"
+    return f"""
+<article class="position-card">
+  <strong>{h(position['title'])}</strong>
+  <span>{h(position['department'] or 'отдел не задан')}</span>
+  {agent_line}
+  <p>{h(position['notes'])}</p>
+</article>
+"""
+
+
+def org_structure_form(structure: dict[str, Any] | None, structures: list[dict[str, Any]]) -> str:
+    parent_options = ["<option value=''>Верхний уровень</option>"]
+    current_id = structure["id"] if structure else None
+    for item in structures:
+        if item["id"] == current_id:
+            continue
+        selected = "selected" if structure and structure["parent_id"] == item["id"] else ""
+        parent_options.append(f"<option value='{h(item['id'])}' {selected}>{h(item['name'])}</option>")
+    return f"""
+<form class="compact-form" method="post" action="/org/structure/save">
+  <input type="hidden" name="id" value="{h(structure['id'] if structure else '')}">
+  <label>Название<input name="name" value="{h(structure['name'] if structure else '')}" placeholder="Например: Производственный блок"></label>
+  <label>Родительская структура<select name="parent_id">{''.join(parent_options)}</select></label>
+  <label>Порядок<input name="sort_order" value="{h(structure['sort_order'] if structure else '0')}"></label>
+  <label class="wide">Описание<textarea name="description">{h(structure['description'] if structure else '')}</textarea></label>
+  <button type="submit">Сохранить структуру</button>
+</form>
+"""
+
+
+def org_position_form(position: dict[str, Any] | None, structure_id: int, agents: list[Any]) -> str:
+    agent_options = ["<option value=''>Не привязан</option>"]
+    for agent in agents:
+        selected = "selected" if position and position["agent_id"] == agent.id else ""
+        agent_options.append(f"<option value='{h(agent.id)}' {selected}>{h(agent.name)}</option>")
+    return f"""
+<form class="compact-form position-form" method="post" action="/org/position/save">
+  <input type="hidden" name="id" value="{h(position['id'] if position else '')}">
+  <input type="hidden" name="structure_id" value="{h(structure_id)}">
+  <label>Должность<input name="title" value="{h(position['title'] if position else '')}" placeholder="Например: Mechanical Design Lead"></label>
+  <label>Отдел<input name="department" value="{h(position['department'] if position else '')}"></label>
+  <label>AI-агент<select name="agent_id">{''.join(agent_options)}</select></label>
+  <label>Порядок<input name="sort_order" value="{h(position['sort_order'] if position else '0')}"></label>
+  <label class="wide">Заметки<textarea name="notes">{h(position['notes'] if position else '')}</textarea></label>
+  <button type="submit">Добавить позицию</button>
+</form>
+"""
 
 
 def agent_department_section(department: str, agents: list[Any], prompts_path: Path) -> str:
@@ -1036,13 +1347,26 @@ th { background: #eef2f7; font-size: 13px; color: #344054; }
 .org { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 20px; }
 .cto { display: inline-block; background: #e7efff; border: 1px solid #b7c8ff; color: #183a8f; padding: 12px 16px; border-radius: 8px; font-weight: 800; margin-bottom: 18px; }
 .org ul { margin: 0; padding-left: 24px; display: grid; gap: 12px; }
+.org-tree ul { list-style: none; margin: 0; padding-left: 18px; display: grid; gap: 12px; border-left: 2px solid #dbe4f0; }
+.org-tree > ul { padding-left: 0; border-left: 0; }
+.org-tree li { display: grid; gap: 4px; }
+.org-tree span { color: var(--muted); font-size: 13px; }
+.org-structure { margin: 26px 0; }
+.position-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
+.position-card { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 14px; display: grid; gap: 7px; min-height: 132px; }
+.position-card strong { font-size: 17px; line-height: 1.25; }
+.position-card span { color: var(--muted); font-size: 13px; font-weight: 700; }
+.position-card p { margin: 0; color: #475467; line-height: 1.35; }
+.compact-form { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 14px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.compact-form button { width: fit-content; }
+.position-form { margin-top: 12px; }
 .login-page { display: grid; place-items: center; background: #111827; }
 .login-main { margin: 0; width: min(460px, calc(100vw - 32px)); padding: 0; }
 .login-card { background: #fff; border-radius: 8px; padding: 28px; display: grid; gap: 14px; box-shadow: 0 20px 80px rgba(0,0,0,.28); }
 .login-card h1 { font-size: 28px; }
 .error { background: #fff1f1; color: #9f1c1c; border: 1px solid #ffd0d0; padding: 10px 12px; border-radius: 6px; margin: 0; }
-@media (max-width: 1100px) { .agent-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 900px) { body { display:block; } aside { position: static; width: 100%; } main { margin: 0; width: 100%; padding: 18px; } .metrics, .grid.two, .fields, .checks, .agent-grid { grid-template-columns: 1fr; } .hero, .page-head { display: block; } .button-link { margin-top: 12px; } }
+@media (max-width: 1100px) { .agent-grid, .position-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 900px) { body { display:block; } aside { position: static; width: 100%; } main { margin: 0; width: 100%; padding: 18px; } .metrics, .grid.two, .fields, .checks, .agent-grid, .position-grid, .compact-form { grid-template-columns: 1fr; } .hero, .page-head { display: block; } .button-link { margin-top: 12px; } }
 """
 
 
