@@ -5,6 +5,7 @@ from urllib.error import HTTPError
 
 from ai_engineering_platform.access_control import AccessStore
 from ai_engineering_platform.agents import AgentProfile
+from ai_engineering_platform.conversation_memory import ConversationMemory
 from ai_engineering_platform.llm import MockLLMClient
 from ai_engineering_platform.telegram_bot import (
     BotSession,
@@ -131,6 +132,51 @@ class TelegramBotTest(unittest.TestCase):
         self.assertIn("Граница твоей роли", client.messages[0]["content"])
         self.assertIn("Фильтр выхода за роль", client.messages[0]["content"])
         self.assertIn("вне роли электрика", client.messages[0]["content"])
+
+    def test_agent_receives_recent_memory_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            memory = ConversationMemory(Path(tmp) / "memory.db")
+            memory.add_event(123, "electrical", "user", "Первый вопрос про питание")
+            memory.add_event(123, "electrical", "assistant", "Первый ответ про питание")
+            client = RecordingLLMClient()
+
+            response = handle_text(
+                "/ask electrical Продолжи мысль",
+                self.agents,
+                client,
+                prompts_path=None,
+                user_id=123,
+                memory=memory,
+                memory_depth=4,
+            )
+
+            events_count = memory.count_events(123)
+
+        self.assertIn("Recorded response", response.text)
+        self.assertIn("Первый вопрос про питание", client.messages[1]["content"])
+        self.assertIn("Первый ответ про питание", client.messages[1]["content"])
+        self.assertEqual(events_count, 4)
+
+    def test_forget_clears_selected_agent_memory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            memory = ConversationMemory(Path(tmp) / "memory.db")
+            memory.add_event(123, "electrical", "user", "Вопрос")
+            session = BotSession(mode="agent", selected_agent_id="electrical")
+
+            response = handle_text(
+                "/forget",
+                self.agents,
+                MockLLMClient(),
+                prompts_path=None,
+                user_id=123,
+                session=session,
+                memory=memory,
+            )
+
+            events_count = memory.count_events(123)
+
+        self.assertIn("очищена", response.text)
+        self.assertEqual(events_count, 0)
 
     def test_handle_ask_429_fallback(self) -> None:
         response = handle_text(

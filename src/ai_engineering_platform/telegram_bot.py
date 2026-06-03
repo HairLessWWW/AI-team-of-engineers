@@ -11,6 +11,7 @@ from urllib.error import HTTPError, URLError
 
 from .access_control import AccessStore, ROLES, seed_owner_users
 from .agents import AgentProfile, load_agents
+from .conversation_memory import ConversationMemory, MemoryEvent
 from .llm import DeepSeekLLMClient, LLMClient, MockLLMClient, OpenAICompatibleLLMClient
 from .prompts import load_agent_prompt
 
@@ -30,6 +31,8 @@ HELP_TEXT = """AI Team of Engineers
 /help - справка
 /whoami - показать твой Telegram user id
 /status - статус бота
+/memory - статус памяти
+/forget - очистить память выбранного специалиста
 /agents - список специалистов
 /ask <agent_id> <вопрос> - задать вопрос специалисту
 /meeting <тема> - совещание всех MVP-агентов
@@ -109,6 +112,8 @@ class TelegramConfig:
     allowed_user_ids: set[int] | None = None
     owner_user_ids: set[int] | None = None
     access_db_path: Path | None = None
+    memory_db_path: Path | None = None
+    memory_depth: int = 10
     poll_interval_seconds: float = 1.0
 
     @classmethod
@@ -121,12 +126,16 @@ class TelegramConfig:
         owner_ids_raw = os.getenv("TELEGRAM_OWNER_IDS", "").strip()
         owner_user_ids = parse_user_ids(owner_ids_raw) or (set(allowed_user_ids) if allowed_user_ids else None)
         access_db_raw = os.getenv("TELEGRAM_ACCESS_DB", "").strip()
+        memory_db_raw = os.getenv("TELEGRAM_MEMORY_DB", "").strip()
+        memory_depth_raw = os.getenv("TELEGRAM_MEMORY_DEPTH", "10").strip()
         return cls(
             token=token,
             mode=os.getenv("AI_ENGINEERING_BOT_MODE", "mock-llm"),
             allowed_user_ids=allowed_user_ids,
             owner_user_ids=owner_user_ids,
             access_db_path=Path(access_db_raw) if access_db_raw else None,
+            memory_db_path=Path(memory_db_raw) if memory_db_raw else None,
+            memory_depth=int(memory_depth_raw),
         )
 
 
@@ -285,7 +294,24 @@ def complete_safely(llm_client: LLMClient, messages: list[dict[str, str]]) -> st
         return llm_error_message(exc)
 
 
-def ask_agent(agent: AgentProfile, question: str, llm_client: LLMClient, prompts_path: Path | None) -> str:
+def render_memory_context(events: list[MemoryEvent]) -> str:
+    if not events:
+        return "Истории диалога с этим специалистом пока нет."
+    lines = ["Последние сообщения диалога с этим специалистом:"]
+    for event in events:
+        speaker = "Пользователь" if event.role == "user" else "Специалист"
+        lines.append(f"{speaker}: {event.content}")
+    return "\n".join(lines)
+
+
+def ask_agent(
+    agent: AgentProfile,
+    question: str,
+    llm_client: LLMClient,
+    prompts_path: Path | None,
+    *,
+    memory_events: list[MemoryEvent] | None = None,
+) -> str:
     role_prompt = load_agent_prompt(agent.id, prompts_path)
     card = get_agent_card(agent)
     system_prompt = (
@@ -310,6 +336,7 @@ def ask_agent(agent: AgentProfile, question: str, llm_client: LLMClient, prompts
                     f"Специалист: {card.label}\n"
                     f"Роль: {card.role}\n"
                     f"Фокус: {agent.focus}\n"
+                    f"Контекст памяти:\n{render_memory_context(memory_events or [])}\n\n"
                     f"Вопрос: {question}"
                 ),
             },
@@ -449,6 +476,21 @@ def render_status(
             f"- специалистов загружено: {len(agents)}",
             f"- доступ: {access}",
             "- интерфейс: Telegram long polling",
+        ]
+    )
+
+
+def render_memory_status(memory: ConversationMemory | None, user_id: int | None) -> str:
+    if memory is None:
+        return "Память диалогов не включена. Укажи TELEGRAM_MEMORY_DB."
+    total = memory.count_events()
+    user_total = memory.count_events(user_id) if user_id is not None else 0
+    return "\n".join(
+        [
+            "Память диалогов:",
+            f"- всего сообщений в памяти: {total}",
+            f"- твоих сообщений/ответов: {user_total}",
+            "- память хранится отдельно по каждому специалисту",
         ]
     )
 
@@ -628,6 +670,8 @@ def handle_text(
     allowed_user_ids: set[int] | None = None,
     access_store: AccessStore | None = None,
     session: BotSession | None = None,
+    memory: ConversationMemory | None = None,
+    memory_depth: int = 10,
 ) -> BotReply:
     session = session or BotSession()
     stripped = text.strip()
@@ -643,6 +687,17 @@ def handle_text(
         return as_reply(f"Твой Telegram user id: {user_id}", main_menu_keyboard())
     if stripped == "/status":
         return as_reply(render_status(mode, agents, allowed_user_ids, access_store), main_menu_keyboard())
+    if stripped == "/memory":
+        return as_reply(render_memory_status(memory, user_id), main_menu_keyboard())
+    if stripped == "/forget":
+        if memory is None:
+            return as_reply("Память диалогов не включена.", main_menu_keyboard())
+        if user_id is None:
+            return as_reply("Telegram user id недоступен.", main_menu_keyboard())
+        if not session.selected_agent_id:
+            return as_reply("Сначала выбери специалиста, память которого нужно очистить.", agents_keyboard(agents))
+        memory.clear_user_agent(user_id, session.selected_agent_id)
+        return as_reply("Память выбранного специалиста очищена.", after_answer_keyboard(session.selected_agent_id))
 
     admin_reply = handle_admin_command(stripped, user_id, access_store)
     if admin_reply:
@@ -660,7 +715,12 @@ def handle_text(
             return as_reply(f"Неизвестный специалист: {agent_id}\n\n{render_agents(agents)}", agents_keyboard(agents))
         session.mode = "agent"
         session.selected_agent_id = agent.id
-        return as_reply(ask_agent(agent, question, llm_client, prompts_path), after_answer_keyboard(agent.id))
+        memory_events = memory.get_recent_events(user_id, agent.id, memory_depth) if memory and user_id is not None else []
+        response = ask_agent(agent, question, llm_client, prompts_path, memory_events=memory_events)
+        if memory and user_id is not None:
+            memory.add_event(user_id, agent.id, "user", question)
+            memory.add_event(user_id, agent.id, "assistant", response)
+        return as_reply(response, after_answer_keyboard(agent.id))
     if stripped.startswith("/meeting "):
         rest = stripped[len("/meeting ") :].strip()
         meeting_agents, topic, error = parse_meeting_request(rest, agents)
@@ -676,7 +736,12 @@ def handle_text(
             session.mode = "idle"
             session.selected_agent_id = None
             return as_reply("Выбранный специалист больше недоступен. Выбери специалиста заново.", agents_keyboard(agents))
-        return as_reply(ask_agent(agent, stripped, llm_client, prompts_path), after_answer_keyboard(agent.id))
+        memory_events = memory.get_recent_events(user_id, agent.id, memory_depth) if memory and user_id is not None else []
+        response = ask_agent(agent, stripped, llm_client, prompts_path, memory_events=memory_events)
+        if memory and user_id is not None:
+            memory.add_event(user_id, agent.id, "user", stripped)
+            memory.add_event(user_id, agent.id, "assistant", response)
+        return as_reply(response, after_answer_keyboard(agent.id))
 
     if session.mode == "meeting_topic":
         meeting_agents = [agent for agent in agents if agent.id in session.meeting_agent_ids]
@@ -707,6 +772,7 @@ def run_bot(config: TelegramConfig) -> None:
     access_store = AccessStore(config.access_db_path) if config.access_db_path else None
     if access_store and config.owner_user_ids:
         seed_owner_users(access_store, config.owner_user_ids)
+    memory = ConversationMemory(config.memory_db_path) if config.memory_db_path else None
     sessions: dict[int, BotSession] = {}
     offset: int | None = None
     print("Telegram bot is running. Press Ctrl+C to stop.")
@@ -788,6 +854,8 @@ def run_bot(config: TelegramConfig) -> None:
                     allowed_user_ids=config.allowed_user_ids,
                     access_store=access_store,
                     session=session,
+                    memory=memory,
+                    memory_depth=config.memory_depth,
                 )
             except Exception as exc:
                 reply = as_reply(f"Ошибка: {exc}")

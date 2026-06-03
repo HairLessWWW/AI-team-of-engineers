@@ -71,6 +71,8 @@ def main() -> None:
             allowed_user_ids=config.allowed_user_ids,
             owner_user_ids=config.owner_user_ids,
             access_db_path=config.access_db_path,
+            memory_db_path=config.memory_db_path,
+            memory_depth=config.memory_depth,
         )
         run_bot(config)
     elif args.command == "telegram-check":
