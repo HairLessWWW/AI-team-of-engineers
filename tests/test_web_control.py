@@ -7,6 +7,8 @@ from ai_engineering_platform.web_control import (
     WebConfig,
     ControlCenterHandler,
     authenticate_user,
+    delete_org_position,
+    delete_org_structure,
     hash_password,
     init_web_db,
     list_org_positions,
@@ -105,6 +107,46 @@ class WebControlTest(unittest.TestCase):
 
         self.assertIn("Структура технического директора", html)
         self.assertIn("Electrical Lead Engineer", html)
+        self.assertIn("/org/structure/delete", html)
+        self.assertIn("/org/position/delete", html)
+        self.assertIn("Редактировать", html)
+
+    def test_delete_org_position(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "web.db"
+            init_web_db(db_path)
+            position = list_org_positions(db_path)[0]
+
+            delete_org_position(db_path, position["id"])
+            positions = list_org_positions(db_path)
+
+        self.assertEqual(len(positions), 12)
+
+    def test_delete_org_structure_removes_positions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "web.db"
+            init_web_db(db_path)
+            structure = list_org_structures(db_path)[0]
+
+            delete_org_structure(db_path, structure["id"])
+            structures = list_org_structures(db_path)
+            positions = list_org_positions(db_path)
+
+        self.assertEqual(structures, [])
+        self.assertEqual(positions, [])
+
+    def test_delete_parent_org_structure_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "web.db"
+            init_web_db(db_path)
+            parent = list_org_structures(db_path)[0]
+            save_org_structure(
+                db_path,
+                {"name": ["Дочерняя"], "parent_id": [str(parent["id"])], "description": [""], "sort_order": ["1"]},
+            )
+
+            with self.assertRaises(ValueError):
+                delete_org_structure(db_path, parent["id"])
 
     def test_save_agent_layout_updates_department_and_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

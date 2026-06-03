@@ -435,6 +435,20 @@ def save_org_position(db_path: Path, form: dict[str, list[str]]) -> None:
             )
 
 
+def delete_org_structure(db_path: Path, structure_id: int) -> None:
+    with sqlite3.connect(db_path) as connection:
+        child = connection.execute("SELECT id FROM org_structures WHERE parent_id = ? LIMIT 1", (structure_id,)).fetchone()
+        if child is not None:
+            raise ValueError("Сначала удали или перепривяжи дочерние структуры.")
+        connection.execute("DELETE FROM org_positions WHERE structure_id = ?", (structure_id,))
+        connection.execute("DELETE FROM org_structures WHERE id = ?", (structure_id,))
+
+
+def delete_org_position(db_path: Path, position_id: int) -> None:
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("DELETE FROM org_positions WHERE id = ?", (position_id,))
+
+
 def list_rules(db_path: Path) -> list[dict[str, Any]]:
     with sqlite3.connect(db_path) as connection:
         rows = connection.execute(
@@ -733,6 +747,16 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
                 save_org_position(self.config.web_db_path, form)
                 self.redirect("/org")
                 return
+            if path == "/org/structure/delete":
+                self.require_role(user, {"owner", "admin"})
+                delete_org_structure(self.config.web_db_path, int(first(form, "id")))
+                self.redirect("/org")
+                return
+            if path == "/org/position/delete":
+                self.require_role(user, {"owner", "admin"})
+                delete_org_position(self.config.web_db_path, int(first(form, "id")))
+                self.redirect("/org")
+                return
         except Exception as exc:
             self.respond(render_page(self.config, "settings", f"<h1>Ошибка</h1><p>{h(exc)}</p>"), HTTPStatus.BAD_REQUEST)
             return
@@ -981,7 +1005,17 @@ def org_structure_sections(
       <h2>{h(structure['name'])}</h2>
       <p class="muted">{h(structure['description'] or 'Описание не задано.')}</p>
     </div>
-    <span>{len(by_structure.get(structure['id'], []))} позиций</span>
+    <div class="structure-actions">
+      <span>{len(by_structure.get(structure['id'], []))} позиций</span>
+      <a class="text-action" href="#structure-{h(structure['id'])}">Редактировать</a>
+      <form method="post" action="/org/structure/delete" onsubmit="return confirm('Удалить структуру и ее позиции?');">
+        <input type="hidden" name="id" value="{h(structure['id'])}">
+        <button class="danger-button" type="submit">Удалить</button>
+      </form>
+    </div>
+  </div>
+  <div class="inline-editor" id="structure-{h(structure['id'])}">
+    {org_structure_form(structure, structures)}
   </div>
   <div class="position-grid">{position_cards}</div>
   {org_position_form(None, structure['id'], agents)}
@@ -1000,7 +1034,17 @@ def org_position_card(position: dict[str, Any], agents: list[Any]) -> str:
   <span>{h(position['department'] or 'отдел не задан')}</span>
   {agent_line}
   <p>{h(position['notes'])}</p>
+  <div class="position-actions">
+    <a class="text-action" href="#position-{h(position['id'])}">Редактировать</a>
+    <form method="post" action="/org/position/delete" onsubmit="return confirm('Удалить позицию?');">
+      <input type="hidden" name="id" value="{h(position['id'])}">
+      <button class="danger-button" type="submit">Удалить</button>
+    </form>
+  </div>
 </article>
+<div class="inline-editor" id="position-{h(position['id'])}">
+  {org_position_form(position, position['structure_id'], agents)}
+</div>
 """
 
 
@@ -1357,6 +1401,14 @@ th { background: #eef2f7; font-size: 13px; color: #344054; }
 .position-card strong { font-size: 17px; line-height: 1.25; }
 .position-card span { color: var(--muted); font-size: 13px; font-weight: 700; }
 .position-card p { margin: 0; color: #475467; line-height: 1.35; }
+.structure-actions, .position-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.position-actions { justify-content: flex-start; margin-top: 4px; }
+.structure-actions form, .position-actions form { margin: 0; }
+.text-action { color: var(--accent); text-decoration: none; font-weight: 800; font-size: 13px; }
+.danger-button { margin: 0; background: #fff1f1; color: #b42318; border: 1px solid #ffd0d0; padding: 7px 10px; font-size: 13px; }
+.danger-button:hover { background: #ffe4e4; }
+.inline-editor { display: none; grid-column: 1 / -1; margin: 0 0 14px; }
+.inline-editor:target { display: block; }
 .compact-form { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 14px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .compact-form button { width: fit-content; }
 .position-form { margin-top: 12px; }
