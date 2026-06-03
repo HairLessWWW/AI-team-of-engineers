@@ -1428,8 +1428,8 @@ h3 { font-size: 18px; margin: 0; letter-spacing: 0; }
 .agent-card dd { margin: 0; color: #344054; }
 .modal { display: none; position: fixed; inset: 0; z-index: 20; }
 .modal:target { display: block; }
-.modal-backdrop { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; padding: 0; margin: 0; background: rgba(15,23,42,.58); cursor: default; }
-.modal-card { position: relative; width: min(920px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; margin: 24px auto; background: #fff; border-radius: 8px; padding: 22px; box-shadow: 0 24px 90px rgba(0,0,0,.32); }
+.modal-backdrop { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; border: 0; padding: 0; margin: 0; background: rgba(15,23,42,.58); cursor: default; }
+.modal-card { position: relative; z-index: 1; width: min(920px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; margin: 24px auto; background: #fff; border-radius: 8px; padding: 22px; box-shadow: 0 24px 90px rgba(0,0,0,.32); }
 .modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 16px; }
 .modal-head h2 { margin: 0; }
 .close { margin: 0; padding: 0; border: 0; background: transparent; color: var(--muted); text-decoration: none; font-weight: 900; font-size: 20px; line-height: 1; cursor: pointer; }

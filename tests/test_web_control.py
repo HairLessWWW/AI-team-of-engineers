@@ -24,6 +24,7 @@ from ai_engineering_platform.web_control import (
     save_web_user,
     seed_admin_user,
     verify_password,
+    CSS,
 )
 
 
@@ -151,6 +152,10 @@ class WebControlTest(unittest.TestCase):
 
             with self.assertRaises(ValueError):
                 delete_org_structure(db_path, parent["id"])
+
+    def test_modal_card_stays_above_backdrop(self) -> None:
+        self.assertIn(".modal-backdrop { position: absolute; inset: 0; z-index: 0;", CSS)
+        self.assertIn(".modal-card { position: relative; z-index: 1;", CSS)
 
     def test_save_agent_layout_updates_department_and_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
