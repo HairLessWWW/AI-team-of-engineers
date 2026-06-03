@@ -9,6 +9,7 @@ from .artifacts import load_artifacts
 from .llm import DeepSeekLLMClient, MockLLMClient, OpenAICompatibleLLMClient
 from .orchestrator import build_readiness_report
 from .telegram_bot import TelegramConfig, check_bot, run_bot
+from .web_control import WebConfig, run_web
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -38,6 +39,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers.add_parser("telegram-check", help="Check Telegram bot token and connectivity.")
+
+    web = subparsers.add_parser("web-control", help="Run the web control center.")
+    web.add_argument("--agents", default=Path("configs/agents.json"), type=Path, help="Agent registry JSON.")
+    web.add_argument("--prompts", default=Path("prompts"), type=Path, help="Folder with role prompt templates.")
     return parser
 
 
@@ -81,3 +86,17 @@ def main() -> None:
     elif args.command == "telegram-check":
         config = TelegramConfig.from_env()
         print(check_bot(config))
+    elif args.command == "web-control":
+        config = WebConfig.from_env()
+        config = WebConfig(
+            host=config.host,
+            port=config.port,
+            password=config.password,
+            agents_path=args.agents,
+            prompts_path=args.prompts,
+            web_db_path=config.web_db_path,
+            access_db_path=config.access_db_path,
+            memory_db_path=config.memory_db_path,
+            materials_db_path=config.materials_db_path,
+        )
+        run_web(config)
