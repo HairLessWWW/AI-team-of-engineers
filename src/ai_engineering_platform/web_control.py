@@ -1007,16 +1007,14 @@ def org_structure_sections(
     </div>
     <div class="structure-actions">
       <span>{len(by_structure.get(structure['id'], []))} позиций</span>
-      <a class="text-action" href="#structure-{h(structure['id'])}">Редактировать</a>
+      <a class="text-action" href="#structure-edit-{h(structure['id'])}">Редактировать</a>
       <form method="post" action="/org/structure/delete" onsubmit="return confirm('Удалить структуру и ее позиции?');">
         <input type="hidden" name="id" value="{h(structure['id'])}">
         <button class="danger-button" type="submit">Удалить</button>
       </form>
     </div>
   </div>
-  <div class="inline-editor" id="structure-{h(structure['id'])}">
-    {org_structure_form(structure, structures)}
-  </div>
+  {org_structure_modal(structure, structures)}
   <div class="position-grid">{position_cards}</div>
   {org_position_form(None, structure['id'], agents)}
 </section>
@@ -1035,16 +1033,14 @@ def org_position_card(position: dict[str, Any], agents: list[Any]) -> str:
   {agent_line}
   <p>{h(position['notes'])}</p>
   <div class="position-actions">
-    <a class="text-action" href="#position-{h(position['id'])}">Редактировать</a>
+    <a class="text-action" href="#position-edit-{h(position['id'])}">Редактировать</a>
     <form method="post" action="/org/position/delete" onsubmit="return confirm('Удалить позицию?');">
       <input type="hidden" name="id" value="{h(position['id'])}">
       <button class="danger-button" type="submit">Удалить</button>
     </form>
   </div>
 </article>
-<div class="inline-editor" id="position-{h(position['id'])}">
-  {org_position_form(position, position['structure_id'], agents)}
-</div>
+{org_position_modal(position, position['structure_id'], agents)}
 """
 
 
@@ -1068,6 +1064,25 @@ def org_structure_form(structure: dict[str, Any] | None, structures: list[dict[s
 """
 
 
+def org_structure_modal(structure: dict[str, Any], structures: list[dict[str, Any]]) -> str:
+    modal_id = f"structure-edit-{h(structure['id'])}"
+    return f"""
+<div class="modal" id="{modal_id}">
+  <a class="modal-backdrop" href="#"></a>
+  <div class="modal-card">
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">Редактирование структуры</p>
+        <h2>{h(structure['name'])}</h2>
+      </div>
+      <a class="close" href="#" aria-label="Закрыть">x</a>
+    </div>
+    {org_structure_form(structure, structures)}
+  </div>
+</div>
+"""
+
+
 def org_position_form(position: dict[str, Any] | None, structure_id: int, agents: list[Any]) -> str:
     agent_options = ["<option value=''>Не привязан</option>"]
     for agent in agents:
@@ -1084,6 +1099,25 @@ def org_position_form(position: dict[str, Any] | None, structure_id: int, agents
   <label class="wide">Заметки<textarea name="notes">{h(position['notes'] if position else '')}</textarea></label>
   <button type="submit">Добавить позицию</button>
 </form>
+"""
+
+
+def org_position_modal(position: dict[str, Any], structure_id: int, agents: list[Any]) -> str:
+    modal_id = f"position-edit-{h(position['id'])}"
+    return f"""
+<div class="modal" id="{modal_id}">
+  <a class="modal-backdrop" href="#"></a>
+  <div class="modal-card">
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">Редактирование позиции</p>
+        <h2>{h(position['title'])}</h2>
+      </div>
+      <a class="close" href="#" aria-label="Закрыть">x</a>
+    </div>
+    {org_position_form(position, structure_id, agents)}
+  </div>
+</div>
 """
 
 
@@ -1407,9 +1441,8 @@ th { background: #eef2f7; font-size: 13px; color: #344054; }
 .text-action { color: var(--accent); text-decoration: none; font-weight: 800; font-size: 13px; }
 .danger-button { margin: 0; background: #fff1f1; color: #b42318; border: 1px solid #ffd0d0; padding: 7px 10px; font-size: 13px; }
 .danger-button:hover { background: #ffe4e4; }
-.inline-editor { display: none; grid-column: 1 / -1; margin: 0 0 14px; }
-.inline-editor:target { display: block; }
 .compact-form { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 14px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.modal-card .compact-form { border: 0; padding: 0; }
 .compact-form button { width: fit-content; }
 .position-form { margin-top: 12px; }
 .login-page { display: grid; place-items: center; background: #111827; }
