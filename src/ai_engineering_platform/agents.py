@@ -12,6 +12,7 @@ class AgentProfile:
     focus: str
     keywords: list[str]
     expected_artifacts: list[str]
+    department: str = "Инженерная команда"
 
 
 def load_agents(config_path: Path) -> list[AgentProfile]:
@@ -23,6 +24,7 @@ def load_agents(config_path: Path) -> list[AgentProfile]:
             focus=item["focus"],
             keywords=item.get("keywords", []),
             expected_artifacts=item.get("expected_artifacts", []),
+            department=item.get("department", "Инженерная команда"),
         )
         for item in data["agents"]
     ]

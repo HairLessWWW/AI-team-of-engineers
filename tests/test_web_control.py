@@ -4,6 +4,8 @@ import tempfile
 import unittest
 
 from ai_engineering_platform.web_control import (
+    WebConfig,
+    ControlCenterHandler,
     authenticate_user,
     hash_password,
     init_web_db,
@@ -33,6 +35,7 @@ class WebControlTest(unittest.TestCase):
                 {
                     "id": ["electrical"],
                     "name": ["Ведущий электрик"],
+                    "department": ["Инженерия продукта"],
                     "focus": ["Питание и защиты"],
                     "keywords": ["power, cable"],
                     "expected_artifacts": ["bom, схемы"],
@@ -44,8 +47,42 @@ class WebControlTest(unittest.TestCase):
             prompt = (prompts_path / "electrical.md").read_text(encoding="utf-8")
 
         self.assertEqual(data["agents"][0]["id"], "electrical")
+        self.assertEqual(data["agents"][0]["department"], "Инженерия продукта")
         self.assertEqual(data["agents"][0]["keywords"], ["power", "cable"])
         self.assertIn("роли электрика", prompt)
+
+    def test_render_agents_uses_grouped_cards_and_modals(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agents_path = root / "agents.json"
+            prompts_path = root / "prompts"
+            agents_path.write_text(
+                json.dumps(
+                    {
+                        "agents": [
+                            {
+                                "id": "electrical",
+                                "name": "Ведущий электрик",
+                                "department": "Инженерия продукта",
+                                "focus": "Питание и защиты",
+                                "keywords": ["power"],
+                                "expected_artifacts": ["bom"],
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            config = WebConfig(password="secret", agents_path=agents_path, prompts_path=prompts_path, web_db_path=root / "web.db")
+            handler = object.__new__(ControlCenterHandler)
+            handler.config = config
+
+            html = handler.render_agents()
+
+        self.assertIn("Инженерия продукта", html)
+        self.assertIn("agent-card", html)
+        self.assertIn("modal-card", html)
 
     def test_save_project_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

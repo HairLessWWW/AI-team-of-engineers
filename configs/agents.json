@@ -3,6 +3,7 @@
     {
       "id": "systems",
       "name": "Systems Engineering Agent",
+      "department": "Системная архитектура",
       "focus": "Системная архитектура, требования, интерфейсы и междисциплинарные риски.",
       "keywords": ["requirements", "interface", "architecture", "traceability", "risk", "safety"],
       "expected_artifacts": ["requirements", "architecture", "test"]
@@ -10,6 +11,7 @@
     {
       "id": "electrical",
       "name": "Electrical Lead Engineer Agent",
+      "department": "Инженерия продукта",
       "focus": "Электрика, питание, защиты, кабели, схемы и BOM.",
       "keywords": ["power", "voltage", "current", "cable", "protection", "fuse", "bom", "connector"],
       "expected_artifacts": ["electrical", "bom", "signals"]
@@ -17,6 +19,7 @@
     {
       "id": "manufacturing",
       "name": "Manufacturing Engineering Agent",
+      "department": "Производство и запуск",
       "focus": "Технологическая подготовка производства и готовность к пилотной сборке.",
       "keywords": ["assembly", "fixture", "work instruction", "esd", "incoming inspection", "calibration", "stand"],
       "expected_artifacts": ["assembly", "manufacturing", "inspection"]
@@ -24,6 +27,7 @@
     {
       "id": "certification_docs",
       "name": "Certification and Technical Documentation Agent",
+      "department": "Сертификация и документация",
       "focus": "Полнота технической документации, протоколы, инструкции и сертификационный пакет.",
       "keywords": ["manual", "passport", "protocol", "certificate", "standard", "test method", "risk assessment"],
       "expected_artifacts": ["manual", "protocol", "risk", "passport"]

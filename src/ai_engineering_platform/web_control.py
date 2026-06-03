@@ -276,6 +276,7 @@ def save_agent(agents_path: Path, prompts_path: Path, form: dict[str, list[str]]
     payload = {
         "id": agent_id,
         "name": first(form, "name") or agent_id,
+        "department": first(form, "department") or "Инженерная команда",
         "focus": first(form, "focus"),
         "keywords": split_csv(first(form, "keywords")),
         "expected_artifacts": split_csv(first(form, "expected_artifacts")),
@@ -569,12 +570,22 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
 
     def render_agents(self) -> str:
         agents = load_agents(self.config.agents_path)
-        cards = []
+        departments: dict[str, list[Any]] = {}
         for agent in agents:
-            prompt = load_agent_prompt(agent.id, self.config.prompts_path)
-            cards.append(agent_form(agent.id, agent.name, agent.focus, agent.keywords, agent.expected_artifacts, prompt))
-        cards.append(agent_form("", "", "", [], [], ""))
-        return f"<h1>Агенты</h1><p class='lead'>Карточки должностей, фокус, артефакты и ролевые инструкции.</p>{''.join(cards)}"
+            departments.setdefault(agent.department, []).append(agent)
+        sections = "".join(agent_department_section(department, items, self.config.prompts_path) for department, items in sorted(departments.items()))
+        new_agent = agent_modal("", "", "Инженерная команда", "", [], [], "")
+        return f"""
+<div class="page-head">
+  <div>
+    <h1>Агенты</h1>
+    <p class="lead">Штат AI-команды по отделам. Открой карточку, чтобы редактировать роль, правила и prompt.</p>
+  </div>
+  <a class="button-link" href="#agent-new">Новый агент</a>
+</div>
+{sections}
+{new_agent}
+"""
 
     def render_org(self) -> str:
         agents = load_agents(self.config.agents_path)
@@ -672,22 +683,75 @@ def history_list(events: list[dict[str, Any]]) -> str:
     return "".join(items)
 
 
-def agent_form(agent_id: str, name: str, focus: str, keywords: list[str], artifacts: list[str], prompt: str) -> str:
+def agent_department_section(department: str, agents: list[Any], prompts_path: Path) -> str:
+    cards = "".join(agent_card(agent, load_agent_prompt(agent.id, prompts_path)) for agent in agents)
+    return f"""
+<section class="department">
+  <div class="department-head">
+    <h2>{h(department)}</h2>
+    <span>{len(agents)} специалистов</span>
+  </div>
+  <div class="agent-grid">{cards}</div>
+</section>
+"""
+
+
+def agent_card(agent: Any, prompt: str) -> str:
+    keywords = ", ".join(agent.keywords[:4]) or "ключевые слова не заданы"
+    artifacts = ", ".join(agent.expected_artifacts[:3]) or "артефакты не заданы"
+    modal_id = f"agent-{h(agent.id)}"
+    return f"""
+<article class="agent-card">
+  <div class="agent-top">
+    <span class="agent-id">{h(agent.id)}</span>
+    <a class="icon-button" href="#{modal_id}" aria-label="Открыть настройки">Настройки</a>
+  </div>
+  <h3>{h(agent.name)}</h3>
+  <p>{h(agent.focus)}</p>
+  <dl>
+    <dt>Ключи</dt><dd>{h(keywords)}</dd>
+    <dt>Артефакты</dt><dd>{h(artifacts)}</dd>
+  </dl>
+</article>
+{agent_modal(agent.id, agent.name, agent.department, agent.focus, agent.keywords, agent.expected_artifacts, prompt)}
+"""
+
+
+def agent_modal(
+    agent_id: str,
+    name: str,
+    department: str,
+    focus: str,
+    keywords: list[str],
+    artifacts: list[str],
+    prompt: str,
+) -> str:
     title = "Новый агент" if not agent_id else name
     readonly = "readonly" if agent_id else ""
+    modal_id = f"agent-{h(agent_id)}" if agent_id else "agent-new"
     return f"""
-<form class="card" method="post" action="/agents/save">
-  <h2>{h(title)}</h2>
-  <div class="fields">
-    <label>ID<input name="id" value="{h(agent_id)}" {readonly}></label>
-    <label>Имя роли<input name="name" value="{h(name)}"></label>
-    <label class="wide">Фокус<textarea name="focus">{h(focus)}</textarea></label>
-    <label>Ключевые слова<input name="keywords" value="{h(', '.join(keywords))}"></label>
-    <label>Ожидаемые артефакты<input name="expected_artifacts" value="{h(', '.join(artifacts))}"></label>
-    <label class="wide">Ролевые инструкции<textarea name="prompt" rows="8">{h(prompt)}</textarea></label>
-  </div>
-  <button type="submit">Сохранить агента</button>
-</form>
+<div class="modal" id="{modal_id}">
+  <a class="modal-backdrop" href="#"></a>
+  <form class="modal-card" method="post" action="/agents/save">
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">Карточка специалиста</p>
+        <h2>{h(title)}</h2>
+      </div>
+      <a class="close" href="#" aria-label="Закрыть">x</a>
+    </div>
+    <div class="fields">
+      <label>ID<input name="id" value="{h(agent_id)}" {readonly}></label>
+      <label>Имя роли<input name="name" value="{h(name)}"></label>
+      <label>Отдел<input name="department" value="{h(department)}"></label>
+      <label>Ожидаемые артефакты<input name="expected_artifacts" value="{h(', '.join(artifacts))}"></label>
+      <label class="wide">Фокус<textarea name="focus">{h(focus)}</textarea></label>
+      <label class="wide">Ключевые слова<input name="keywords" value="{h(', '.join(keywords))}"></label>
+      <label class="wide">Ролевые инструкции<textarea name="prompt" rows="10">{h(prompt)}</textarea></label>
+    </div>
+    <button type="submit">Сохранить агента</button>
+  </form>
+</div>
 """
 
 
@@ -768,7 +832,10 @@ nav a.active, nav a:hover { background: #263244; color: #fff; }
 main { margin-left: 252px; padding: 30px; width: calc(100% - 252px); max-width: 1420px; }
 h1 { font-size: 34px; margin: 0 0 8px; letter-spacing: 0; }
 h2 { font-size: 19px; margin: 0 0 16px; letter-spacing: 0; }
+h3 { font-size: 18px; margin: 0; letter-spacing: 0; }
 .lead, .muted { color: var(--muted); }
+.page-head { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 18px; }
+.button-link { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; padding: 0 14px; background: var(--accent); color: #fff; text-decoration: none; border-radius: 6px; font-weight: 800; white-space: nowrap; }
 .hero { min-height: 230px; background: linear-gradient(120deg, rgba(26,38,65,.88), rgba(45,72,144,.72)), url('https://images.unsplash.com/photo-1517048676732-d65bc937f952?q=80&w=1600&auto=format&fit=crop'); background-size: cover; background-position: center; color: #fff; padding: 32px; display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 18px; }
 .hero h1 { max-width: 760px; }
 .hero p { max-width: 700px; color: #e2e8f0; }
@@ -780,6 +847,26 @@ h2 { font-size: 19px; margin: 0 0 16px; letter-spacing: 0; }
 .metric strong { font-size: 34px; line-height: 1.15; }
 .grid.two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .card { margin: 18px 0; }
+.department { margin: 22px 0 30px; }
+.department-head { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; margin-bottom: 12px; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.department-head h2 { margin: 0; }
+.department-head span { color: var(--muted); font-weight: 700; }
+.agent-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.agent-card { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 16px; min-height: 245px; display: grid; grid-template-rows: auto auto 1fr auto; gap: 12px; box-shadow: 0 1px 2px rgba(16,24,40,.04); }
+.agent-card p { margin: 0; color: #475467; line-height: 1.45; }
+.agent-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.agent-id { color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; }
+.icon-button { color: var(--accent); text-decoration: none; font-size: 13px; font-weight: 800; }
+.agent-card dl { display: grid; grid-template-columns: 86px 1fr; gap: 7px 10px; margin: 0; font-size: 13px; }
+.agent-card dt { color: var(--muted); font-weight: 800; }
+.agent-card dd { margin: 0; color: #344054; }
+.modal { display: none; position: fixed; inset: 0; z-index: 20; }
+.modal:target { display: block; }
+.modal-backdrop { position: absolute; inset: 0; background: rgba(15,23,42,.58); }
+.modal-card { position: relative; width: min(920px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; margin: 24px auto; background: #fff; border-radius: 8px; padding: 22px; box-shadow: 0 24px 90px rgba(0,0,0,.32); }
+.modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 16px; }
+.modal-head h2 { margin: 0; }
+.close { color: var(--muted); text-decoration: none; font-weight: 900; font-size: 20px; line-height: 1; }
 .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 label { display: grid; gap: 6px; font-weight: 700; color: #344054; }
 input, textarea, select { width: 100%; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px 11px; font: inherit; color: var(--ink); background: #fff; }
@@ -805,7 +892,8 @@ th { background: #eef2f7; font-size: 13px; color: #344054; }
 .login-card { background: #fff; border-radius: 8px; padding: 28px; display: grid; gap: 14px; box-shadow: 0 20px 80px rgba(0,0,0,.28); }
 .login-card h1 { font-size: 28px; }
 .error { background: #fff1f1; color: #9f1c1c; border: 1px solid #ffd0d0; padding: 10px 12px; border-radius: 6px; margin: 0; }
-@media (max-width: 900px) { body { display:block; } aside { position: static; width: 100%; } main { margin: 0; width: 100%; padding: 18px; } .metrics, .grid.two, .fields, .checks { grid-template-columns: 1fr; } .hero { display: block; } }
+@media (max-width: 1100px) { .agent-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 900px) { body { display:block; } aside { position: static; width: 100%; } main { margin: 0; width: 100%; padding: 18px; } .metrics, .grid.two, .fields, .checks, .agent-grid { grid-template-columns: 1fr; } .hero, .page-head { display: block; } .button-link { margin-top: 12px; } }
 """
 
 
